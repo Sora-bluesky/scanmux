@@ -42,7 +42,8 @@ Each command decides before its first process start, credential read or connecti
 | `history`, `ci-check`, `recover`, `dispositions`, `policy-check`, `job-export`, `job-recover` | Only the Gitleaks output check |
 | `job-scan`, `host-job-scan` | Their profile's components |
 
-A refusal exits `4` with a fixed code.
+A refusal exits `2` for `deps` (failure), or `4` for other commands, with the same fixed code.
+Completed `deps` checks exit `10` for added advisories with a base, or present advisories without one; otherwise they exit `0`, never a security `PASS`.
 Hyphens in component names become underscores in the code.
 
 | Code | Meaning |
@@ -52,11 +53,13 @@ Hyphens in component names become underscores in the code.
 | `runtime_policy_denied_<component>_digest` | One identity denied |
 | `runtime_policy_unidentified_<component>` | Component identity unavailable |
 
-The error names the policy that refused:
+For commands other than `deps`, the error names the policy that refused:
 
 ```json
 {"schema":"scanmux.error/v1","gate":"ERROR","exitCode":4,"error":"runtime_policy_stopped","policy":{"id":"00000000-0000-4000-8000-000000000001","revision":1,"state":"stopped","sha256":"<canonical policy SHA256>"}}
 ```
+
+`deps` reports the same refusal code as `{"schema":"scanmux.error/v1","exitCode":2,"error":"runtime_policy_stopped"}`.
 
 A v1 policy does not verify publishers or record updates.
 A policy in state `active` with no matching rule is not a safety claim.
@@ -111,7 +114,7 @@ Paste the printed tool pin into `tools` and ledger pin into `provenance.ledger`;
 `engine-history` with the same `--config` lists pinned entries as `current`, `superseded` or `denied`.
 Exit 0 means the ledger was read, not PASS.
 
-Refusals exit `4` before any engine starts.
+Refusals exit `2` for `deps` (failure), or `4` for other commands, before any engine starts.
 
 | Code | Cause |
 |---|---|
@@ -120,7 +123,7 @@ Refusals exit `4` before any engine starts.
 | `provenance_unrecorded_<component>` | Unhashed or not in the ledger |
 | `provenance_ledger_mismatch` | Ledger pin mismatch |
 
-The first three add `"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}` after `policy`.
+For commands other than `deps`, the first three add `"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}` after `policy`.
 `provenance_ledger_mismatch` adds neither a `policy` nor an `engine` object.
 
 Native commands, `job-scan` and `host-job-scan` apply v2; job Linux engines are host-verified before mounting. `serve` refuses schema 2.

@@ -29,29 +29,36 @@ async function checkMetadata(root: string, acquiredCommit?: string): Promise<voi
     }
   }
   await checkLinks(gitDir);
-  for (const file of ['commondir', 'objects/info/alternates', 'objects/info/http-alternates', 'config.worktree']) {
+  for (const file of ['commondir', 'objects/info/alternates', 'objects/info/http-alternates']) {
     if (await exists(path.join(gitDir, file))) throw new SafeError('unsupported_git_layout');
   }
   if (await exists(path.join(gitDir, 'shallow'))) {
     if (!acquiredCommit || (await readFile(path.join(gitDir, 'shallow'), 'utf8')).trim() !== acquiredCommit) throw new SafeError('unsupported_git_layout');
   }
-  const configPath = await canonical(path.join(gitDir, 'config'));
+  await checkGitConfig(path.join(gitDir, 'config'));
+  const worktreeConfig = path.join(gitDir, 'config.worktree');
+  if (await exists(worktreeConfig)) await checkGitConfig(worktreeConfig);
+}
+async function checkGitConfig(file: string): Promise<void> {
+  const configPath = await canonical(file);
   const raw = await readFile(configPath, 'utf8');
   if (raw.length > 65536) throw new SafeError('unsupported_git_config');
   let section = '';
   const allowed: Record<string, Set<string>> = {
     core: new Set(['repositoryformatversion', 'filemode', 'bare', 'logallrefupdates', 'symlinks', 'ignorecase']),
     remote: new Set(['url', 'fetch']), branch: new Set(['remote', 'merge']),
+    extensions: new Set(['worktreeconfig']),
   };
   for (const line of raw.split(/\r?\n/)) {
     const text = line.trim();
     if (!text || /^[#;]/.test(text)) continue;
-    const heading = /^\[(core|remote|branch)(?: "[^"\r\n]+")?\]$/i.exec(text);
+    const heading = /^\[(core|remote|branch|extensions)(?: "[^"\r\n]+")?\]$/i.exec(text);
     if (heading) { section = heading[1].toLowerCase(); continue; }
     const setting = /^([a-z]+)\s*=\s*([^\r\n]*)$/i.exec(text);
     if (!setting || !allowed[section]?.has(setting[1].toLowerCase()) || /\\$/.test(text)) throw new SafeError('unsupported_git_config');
     if (setting[1].toLowerCase() === 'repositoryformatversion' && setting[2] !== '0') throw new SafeError('unsupported_git_format');
     if (setting[1].toLowerCase() === 'bare' && setting[2].toLowerCase() !== 'false') throw new SafeError('bare_git_unsupported');
+    if (setting[1].toLowerCase() === 'worktreeconfig' && !/^(true|false)$/i.test(setting[2])) throw new SafeError('unsupported_git_config');
   }
 }
 async function gitExit(root: string, config: Config, workspace: string, args: string[], signal?: AbortSignal,

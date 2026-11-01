@@ -181,7 +181,7 @@ Command-level admission and process-owner copies use a separate budget with the 
 Omitting the key from a scan's config leaves that scan's copies unbounded by this option, even if the command has a budget.
 
 An exhausted allowance is `INCOMPLETE` with `job_disk_copy_limit` (exit 3); an earlier `FAIL` or `ERROR` keeps its priority.
-Refusal before the owner starts uses the existing `scanmux.error/v1` envelope with that gate and cause.
+Refusal before the owner starts uses the existing `scanmux.error/v1` envelope with that gate and cause; `deps` instead reports failure with exit 2 and the cause, without a scan gate.
 In `host-job-scan`, the Windows parent charges admission copies and passes only the remainder through transient owner/worker arguments.
 
 The worker charges its own admission copies and the app copy, then passes the remainder to Linux through the existing bootstrap.
@@ -299,9 +299,9 @@ A save/check failure is an error, not a completed report.
 
 Abrupt process/OS termination can leave only already-saved per-job files; automatic batch resume is not provided.
 
-## Check dependency upgrades and lockfile changes
+## Compare dependency advisories, upgrades and lockfile changes
 
-`deps` reads every tracked file to plan but analyzes only `package.json`, `package-lock.json`, `.npmrc`, `pyproject.toml`, `uv.lock` and `uv.toml` of the selected commits within `maxFileBytes` and the plan's LFS/binary exclusions, and runs offline OSV on planned lockfiles. It never checks out, installs, regenerates locks or fetches.
+`deps` plans each selected commit and runs offline OSV on each side's planned lockfiles in separate private snapshots. Both sides use the same pinned OSV-Scanner, copied database and empty configuration; `osv.database` records the database identity once and `osv.sides` records each side's completion. Upgrade/diff analysis also reads committed `package.json`, `.npmrc`, `pyproject.toml` and `uv.toml`, within `maxFileBytes` and the plan's LFS/binary exclusions. It never writes to the target repository, checks out, installs, regenerates locks or fetches.
 
 ```sh
 node bin/scanmux.mjs deps /absolute/repo --config /absolute/controller.json --base <SHA> --head <SHA> --json
@@ -310,8 +310,12 @@ node bin/scanmux.mjs deps /absolute/repo --config /absolute/controller.json --ba
 Each OSV finding in an npm v2/v3 or uv.lock v1 lockfile is `allowed` (declarations admit a newer fixed version; not a resolution or install proof), `blocked` or `undetermined` with a closed reason.
 With base/head, changed lockfile entries are classified; version changes and additions are explained by a path from a changed direct requirement or listed as unexplained.
 
+JSON uses `scanmux.dependencies/v2` and includes `tool: { name: "scanmux", version }` from the installed package. `advisories` has one entry per lockfile path, ecosystem, package name and OSV id. Status is `removed` (base only), `added` (head only), or `unchanged` (both, even across a version change); without a base it is `present`. `advisoryCounts` counts all four statuses. Text output lists added advisories first. A failed/incomplete side prevents advisory comparison and returns exit 2, even when no advisories were observed.
+
+Each entry includes `baseVersion`/`headVersion` (null when absent; multiple locked versions are sorted and joined with `, `), `id`, `aliases`, `severity` (the record's `database_specific.severity`, otherwise null; no score is calculated), and `fixedVersions` from matching affected ranges (empty when none). `dev` uses npm lockfile `dev`/`devOptional`, choosing head when present, otherwise base; it is true only when every matching instance is a development dependency, and null for other ecosystems. npm v2/v3 links and workspace packages declared in the lockfile are local and do not cause incomplete offline matching. An undeclared versionless package still does. Workspace upgrade analysis may remain `undetermined` with `workspaces_outside_subset`.
+
 Resolver settings outside the repository are not read.
-Exit 0 means analysis completed, never `PASS`; 3 lists missing inputs or OSV observations; 4 is an error.
+**The `deps` exit codes changed in 0.2.0**, replacing the previous 0/3 analysis result: 2 means a failed/incomplete OSV check on either side, an unreadable/unparseable planned lockfile, an unresolved commit or another plan blocker; 10 means added advisories with a base, or present advisories without one; 0 means all required checks completed with no added (or present) advisories. Existing unchanged advisories may remain at exit 0, so it is never a security `PASS`. Upgrade-analysis `undetermined` results remain visible and do not change the exit code.
 
 ## Reproduce one finding and check an unchanged regression test
 

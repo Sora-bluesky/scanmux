@@ -119,7 +119,7 @@ for (const refusal of refusals) {
     const config = await configFile({ schema: 2, runtimePolicy: raw, tools });
     for (const command of commands) {
       const result = await invoke(argv(command, config));
-      assert.equal(result.exitCode, 4, command);
+      assert.equal(result.exitCode, command === 'deps' ? 2 : 4, command);
       assert.equal(errorCode(result.error), refusal.code, command);
       assert.deepEqual(result.launches, [], command);
       assert.equal(result.output, '', command);
@@ -133,7 +133,7 @@ test('a component deny applies only to entries whose closure uses that tool', as
   await privateWorkspace(); // Both policies start with the same already-protected parent.
   for (const command of ['scan', 'deps', 'resume', 'doctor', 'scan-list']) {
     const result = await invoke(argv(command, config));
-    assert.equal(result.exitCode, 4, command);
+    assert.equal(result.exitCode, command === 'deps' ? 2 : 4, command);
     assert.equal(errorCode(result.error), 'runtime_policy_denied_osv_component', command);
     assert.deepEqual(result.launches, [], command);
   }

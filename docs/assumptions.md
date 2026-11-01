@@ -44,7 +44,7 @@ Command-level admission and process-owner copies have a separate budget using th
 A scan whose config omits the key does not inherit the command's budget.
 
 Exhaustion gives `INCOMPLETE` and `job_disk_copy_limit`, preserving earlier `FAIL`/`ERROR` precedence.
-Refusal before the owner starts uses the existing error envelope with exit 3.
+Refusal before the owner starts uses the existing error envelope with exit 3; `deps` reports these failures with exit 2 instead.
 Windows `host-job-scan` reads the referenced offline profile's top-level key: the outer parent charges admission copies, then passes only the remainder through transient owner/worker arguments.
 
 The worker charges its own admission and app copies, then hands the remainder to the existing Linux bootstrap; no stage returns allowance upstream.

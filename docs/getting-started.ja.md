@@ -185,7 +185,7 @@ node bin/scanmux.mjs scan /absolute/repository --config /absolute/controller.jso
 
 上限到達は`job_disk_copy_limit`を原因とする`INCOMPLETE`（終了3）です。
 先行する`FAIL`や`ERROR`があれば優先します。
-管理役の起動前の拒否では、既存の`scanmux.error/v1`形式にこの判定と原因を記録します。
+管理役の起動前の拒否では、既存の`scanmux.error/v1`形式にこの判定と原因を記録します。`deps`では、スキャンの判定を付けずに終了2と失敗原因を記録します。
 `host-job-scan`では、Windowsの親が受付コピーを計上し、残予算だけを一時的な管理役・workerの起動引数で渡します。
 
 workerは自分の受付コピーとアプリコピーを差し引き、残りを既存の起動メッセージでLinuxへ渡します。
@@ -290,10 +290,10 @@ node bin/scanmux.mjs scan-list /absolute/repositories.json --config /absolute/co
 `plan-list`の終了値0は全対象の計画作成成功だけを意味し、セキュリティ判定`PASS`を返しません。`scan-list`は全行を[判定の優先順](results.ja.md#判定と終了コードを読む)で集約し、未実施を合格へ変えません。JSON出力には`batch.json`の全内容を含めます。
 出力検査・保存の失敗はエラーとして扱います。プロセスやOSが異常終了した場合は、それまでに保存した個別成果だけが残ることがあります。一覧実行の自動再開は未実装です。
 
-## 依存関係の更新可否とlockfile差分を調べる
+## 依存関係の脆弱性情報・更新可否・lockfile差分を比較する
 
-`deps`は計画用に全追跡ファイルを読み、解析には指定commitの`package.json`・`package-lock.json`・`.npmrc`・`pyproject.toml`・`uv.lock`・`uv.toml`だけを`maxFileBytes`と計画のLFS・バイナリ除外で読み、計画したlockfileにだけオフラインOSVを使います。
-checkout・install・lock再生成・通信はしません。
+`deps`は指定した各commitを計画し、それぞれのlockfileを個別の非公開スナップショットでオフラインOSVにかけます。両側で固定した同じOSV-Scanner・データベースのコピー・空の設定を使い、`osv.database`にデータベースの識別情報を一度だけ、`osv.sides`に各側の完了状態を記録します。更新可否・差分の解析では、commit内の`package.json`・`.npmrc`・`pyproject.toml`・`uv.toml`も`maxFileBytes`と計画のLFS・バイナリ除外の範囲で読みます。
+対象リポジトリへの書込み、checkout・install・lock再生成・通信はしません。
 
 ```sh
 node bin/scanmux.mjs deps /absolute/repo --config /absolute/controller.json --base <SHA> --head <SHA> --json
@@ -302,9 +302,13 @@ node bin/scanmux.mjs deps /absolute/repo --config /absolute/controller.json --ba
 npm v2/v3とuv.lock v1のOSV指摘ごとに、`allowed`（宣言が新しい修正版を許す。
 解決・installの証明ではない）・`blocked`・`undetermined`を定められた理由付きで返します。
 base/headでは変更されたlockfile項目を分類し、版の変更と追加を、変更された直接依存からの経路で説明するか未説明として列挙します。
+JSONは`scanmux.dependencies/v2`で、インストール済みパッケージから取得した`tool: { name: "scanmux", version }`を含みます。`advisories`はlockfileパス・ecosystem・パッケージ名・OSV IDごとに1件です。`status`は`removed`（baseだけ）、`added`（headだけ）、`unchanged`（両側。版が変わっても同じ）で、base未指定なら`present`です。`advisoryCounts`で4種類を集計し、テキストでは追加分を先に表示します。片側でも検査が失敗・未完了なら脆弱性情報を比較せず、観測が0件でも終了値2にします。
+
+各項目には`baseVersion`・`headVersion`（存在しなければnull。複数の版はソートして`, `で連結）、`id`・`aliases`・`severity`（レコードの`database_specific.severity`。なければnull。スコアは計算しない）、該当するaffected範囲の修正版`fixedVersions`（記録がなければ空配列）が入ります。`dev`はnpm lockfileの`dev`・`devOptional`から読み、headにパッケージがあればhead、なければbaseを使います。該当する全インスタンスが開発用の場合だけtrue、それ以外のecosystemではnullです。npm v2/v3のlockfileで宣言されたlink・workspaceパッケージはローカルと判定し、オフライン照合の欠けに数えません。ローカルと宣言されていない版なしパッケージは未完了のままです。workspaceの更新可否は`workspaces_outside_subset`で`undetermined`になり得ます。
+
 リポジトリ外のresolver設定は読みません。
 
-終了値0は解析完了でPASSではなく、3は入力・OSV観測の欠け（列挙）、4はエラーです。
+**0.2.0で`deps`の終了値を変更しました。** 従来の解析結果0・3に代わり、2は片側でもOSVが失敗・未完了、計画したlockfileの読取り・解析不能、commitの解決不能、その他の計画阻害を表します。10はbase指定時に追加分あり、base未指定時に現存する脆弱性情報ありです。0は必要な検査がすべて完了し、追加分（base未指定なら現存分）がない場合です。既存の`unchanged`が残っていても0になるため、安全性のPASSではありません。更新可否の`undetermined`は出力に残り、終了値には影響しません。
 
 ## 1件の指摘を再現し、変更していない回帰テストで修正後を確かめる
 

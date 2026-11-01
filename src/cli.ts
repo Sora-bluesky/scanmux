@@ -77,8 +77,8 @@ Usage: scanmux doctor [--config /absolute/config.json] [--json]
        scanmux intel-match /absolute/report.json|/absolute/import.json --store /absolute/intel-store --config /absolute/config.json [--max-age-hours N] [--require-fresh] [--report-language ja|en] [--json]
 
 Default commands remain offline. AI requires an explicit AI Plan and fixed isolated Linux runner.
-On Windows, a command that would start a configured tool needs the process owner pinned as tools["windows-process-owner"] (build it with scripts/build-windows-process-owner.ps1); without it the command exits 4 with process_containment_unavailable before any tool starts. Each tool then runs in its own Job Object, and a stop is reported only after the whole process tree is gone, or as termination_unverified.
-Exit codes: PASS=0 FAIL=1 REVIEW=2 INCOMPLETE=3 ERROR=4.
+On Windows, a command that would start a configured tool needs the process owner pinned as tools["windows-process-owner"] (build it with scripts/build-windows-process-owner.ps1); without it the command fails with process_containment_unavailable before any tool starts (deps exits 2; other commands exit 4). Each tool then runs in its own Job Object, and a stop is reported only after the whole process tree is gone, or as termination_unverified.
+Scan gate exit codes: PASS=0 FAIL=1 REVIEW=2 INCOMPLETE=3 ERROR=4. deps has separate exit codes below.
 Reports are private, outside the target. No source build/install, push or upload.
 runner-check is an explicit model-free ChatGPT/Linux connection diagnostic; it cannot enable AI scans.
 ai-plan discloses the fixed OpenAI source scope and finite limits without reading credentials or starting a worker.
@@ -87,7 +87,8 @@ AI is limited to one local repository; Web, batch and resume remain offline-only
 ai-scan accepts paired --ci-run UUID --ci-job ID; its v2 CI check requires the exact saved report via --ci-report.
 Diff requests scan the full head snapshot; empty diffs do not skip dependencies.
 plan-list success means planning completed, never a security PASS.
-deps reads lockfiles and manifests from commits with offline OSV; exit 0 means analysis completed, never a security PASS; missing input or OSV exits 3.
+deps checks base/head lockfiles with the same offline OSV database and reports added/removed/unchanged advisories (present without a base).
+Since 0.2.0, deps uses scanmux.dependencies/v2 and exits 0 for no added/present advisory, 10 for added/present advisories, or 2 for a failed/incomplete check. Upgrade undetermined results do not change this exit code; 0 is never a security PASS.
 import reads OSV-Scanner or Gitleaks SARIF 2.1.0 and earlier import records, bound to the commit they record or --scanned-commit; exit 0 means read and recorded, never a security PASS. The gate is unchanged and imported findings stay separate; any rejected input, unbound or non-HEAD commit, dirty worktree or missing value exits 3. An import record's factsDigest detects corruption only; it is not an authentication. Import records are scanmux.import/v2; an earlier scanmux.import/v1 record is refused as unsupported_schema, so import its original SARIF again.
 ci-check requires a trusted, pre-scan expectation and all four engines; missing jobs cannot pass.
 ci-github verifies one offline-selfscan GitHub Actions run with the runtime policy v2 gh and GH_TOKEN: run, workflow content, jobs, artifact, log anchor, manifest and a local re-evaluation. It exits with the claimed gate only when all agree; missing, cancelled or skipped exits 3; tampering, mismatch, failed acquisition, disagreement or a failure scenario exits 4. --from-dir checks a downloaded copy, still requires every API check, and turns a PASS claim into INCOMPLETE (exit 3).
@@ -107,7 +108,7 @@ job-recover exports only a verified checkpoint prefix as ERROR; it never starts 
 Job viewers show the recorded outer job outcome separately from the analysis outcome; viewing does not authenticate current ownership.
 engine-record is the only engine ledger writer; it needs a runtime policy v2 config and verifies publisher evidence before appending.
 engine-history exit 0 means the pinned ledger was read, never a security PASS. The ledger is not an authenticated history.
-Runtime policy v2 verifies publisher-required engines offline with the pinned gh before any engine starts, including job-scan and host-job-scan; refusals exit 4.
+Runtime policy v2 verifies publisher-required engines offline with the pinned gh before any engine starts, including job-scan and host-job-scan; refusals exit 2 for deps (failure), or 4 for other commands.
 serve refuses runtime policy v2.
 release-record measures the package file set (package.json files, package.json and package-lock.json) of one commit from Git blobs and appends one line to transparency/releases.jsonl when the log head equals --expect-head; recording the same release again appends nothing. It is the only log writer.
 release-verify reads the log from --log-commit's Git blob, never the worktree, and measures --installed or --commit. Exit 0 means a logged release match inside the --pin prefix, never a security PASS; without --pin a match is logged_unpinned, not owner-approved, and exits 3. Not logged exits 3, or 4 when the version is logged with another measurement; a tampered log exits 4 and an unreadable log 3.
@@ -228,7 +229,10 @@ export async function main(argv: string[], dependencies?: { ai?: SyntheticAiRunt
     try { code = await runMain(argv, dependencies); }
     finally {
       await cleanup.cleanup();
-      if (sourceCleanupFailed()) { process.stderr.write(staticError('source_cleanup_failed') + '\n'); code = 4; }
+      if (sourceCleanupFailed()) {
+        code = argv[0] === 'deps' ? 2 : 4;
+        process.stderr.write(JSON.stringify({ ...JSON.parse(staticError('source_cleanup_failed')), exitCode: code }) + '\n');
+      }
     }
     return code;
   });
@@ -238,6 +242,7 @@ async function runMain(argv: string[], dependencies?: { ai?: SyntheticAiRuntime 
   const abort = new AbortController();
   const stop = () => abort.abort();
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  let command: string | undefined = argv[0] === 'deps' ? 'deps' : undefined;
   try {
     const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: {
       config: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' }, 'site-origin': { type: 'string' },
@@ -257,7 +262,8 @@ async function runMain(argv: string[], dependencies?: { ai?: SyntheticAiRuntime 
       store: { type: 'string' }, 'max-age-hours': { type: 'string' }, 'require-fresh': { type: 'boolean' },
     } });
     if (values.help || !positionals.length) { process.stdout.write(help); return 0; }
-    const [command, target] = positionals;
+    const target = positionals[1];
+    command = positionals[0];
     if (!['doctor', 'plan', 'scan', 'deps', 'import', 'ai-plan', 'ai-scan', 'plan-list', 'scan-list', 'serve', 'runner-check', 'ci-check', 'history', 'recover', 'resume', 'dispositions', 'policy-check', 'job-scan', 'reproduce', 'host-job-scan', 'job-export', 'job-recover', 'engine-record', 'engine-history', 'ci-github', 'release-record', 'release-verify', 'release-log-check', 'intel-refresh', 'intel-match'].includes(command)
       || (['ci-check', 'history'].includes(command) ? positionals.length < 2 : command === 'import' ? positionals.length < 3 : positionals.length !== (['doctor', 'serve', 'runner-check', 'engine-history', 'ci-github', 'intel-refresh'].includes(command) ? 1 : 2))) throw new SafeError('invalid_command');
     if ((command === 'ci-github') !== (values.repo !== undefined && values.run !== undefined && values.attempt !== undefined)
@@ -600,6 +606,11 @@ JSON: ${verified.destination}
       return report.exitCode;
     });
   } catch (error) {
+    if (command === 'deps') {
+      process.stderr.write(JSON.stringify({ schema: 'scanmux.error/v1', exitCode: 2,
+        error: error instanceof SafeError ? error.code : 'invalid_input_or_io_failure' }) + '\n');
+      return 2;
+    }
     if (error instanceof JobDiskCopyLimitError || error instanceof SafeError && error.code === 'job_disk_measured_limit') {
       process.stderr.write(JSON.stringify({ schema: 'scanmux.error/v1', gate: 'INCOMPLETE', exitCode: 3, error: error.code }) + '\n');
       return 3;

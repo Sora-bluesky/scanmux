@@ -38,7 +38,7 @@ A runtime policy v1 cannot name it.
 ## When it is required
 
 On Windows, a command that would start a configured tool refuses to run without the pin.
-It exits 4 with `process_containment_unavailable` before any tool starts, the gh publisher check included.
+It fails with `process_containment_unavailable` before any tool starts, the gh publisher check included; `deps` exits 2 (failure), while other commands exit 4.
 Only a stop or deny decision of the runtime policy, which starts nothing, is reported before it.
 
 `doctor` without tools, `runner-check` without Gitleaks, `engine-history`, `job-scan` and `host-job-scan` do not need it.

@@ -43,7 +43,8 @@
 | `history`、`ci-check`、`recover`、`dispositions`、`policy-check`、`job-export`、`job-recover` | 出力検査用のGitleaksだけ |
 | `job-scan`、`host-job-scan` | プロファイルで指定した部品 |
 
-拒否時は終了`4`で固定コードを返します。
+拒否時は同じ固定コードを返し、`deps`の終了値は`2`（失敗）、他のコマンドは`4`です。
+検査が完了した`deps`は、base指定時に追加分があるか、base未指定時に現存する脆弱性情報があれば終了`10`、それ以外は`0`です。終了`0`は安全性の`PASS`ではありません。
 部品名のハイフンはコード内ではアンダースコアになります。
 
 | コード | 意味 |
@@ -53,11 +54,13 @@
 | `runtime_policy_denied_<component>_digest` | 識別値の拒否 |
 | `runtime_policy_unidentified_<component>` | 識別値を確認できない部品 |
 
-エラーには拒否した方針を記録します。
+`deps`以外のコマンドでは、エラーに拒否した方針を記録します。
 
 ```json
 {"schema":"scanmux.error/v1","gate":"ERROR","exitCode":4,"error":"runtime_policy_stopped","policy":{"id":"00000000-0000-4000-8000-000000000001","revision":1,"state":"stopped","sha256":"<canonical policy SHA256>"}}
 ```
+
+`deps`は同じ拒否コードを`{"schema":"scanmux.error/v1","exitCode":2,"error":"runtime_policy_stopped"}`の形式で返します。
 
 v1の方針は配布元の検証や更新記録を行いません。
 一致する拒否規則がない`active`も安全性の表明ではありません。
@@ -118,7 +121,7 @@ GitHub-hosted runnerであることも照合します。
 同じ`--config`で`engine-history`を実行すると、固定した記録を`current`・`superseded`・`denied`として表示します。
 終了0は台帳を読めた意味で、PASSではありません。
 
-拒否はエンジン起動前の終了`4`です。
+拒否はエンジン起動前に行い、`deps`の終了値は`2`（失敗）、他のコマンドは`4`です。
 
 | コード | 原因 |
 |---|---|
@@ -127,7 +130,7 @@ GitHub-hosted runnerであることも照合します。
 | `provenance_unrecorded_<component>` | hash未確認、または台帳にない |
 | `provenance_ledger_mismatch` | 台帳の固定値が不一致 |
 
-最初の3つは、`policy`の後に`"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}`のような情報を追加します。
+`deps`以外では、最初の3つは`policy`の後に`"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}`のような情報を追加します。
 `provenance_ledger_mismatch`には`policy`も`engine`も追加しません。
 
 ネイティブコマンド、`job-scan`、`host-job-scan`でv2を適用します。

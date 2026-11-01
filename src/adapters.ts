@@ -2,12 +2,13 @@ import { emptyRun } from './engine-run.ts';
 export { emptyRun } from './engine-run.ts';
 import { RuntimeAdvisoryAdapter } from './runtime-advisories.ts';
 import { TrivyAdapter } from './trivy-adapter.ts';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { array, digest, hash, identifier, record, SafeError, safeRelative } from './safety.ts';
 import { execute, verifyVersion } from './process.ts';
 import { prepareOfflineDatabase, verifyPreparedDatabase } from './osv-database.ts';
 import { JobDiskCopyLimitError } from './copy-budget.ts';
+import { matchingNpmPackages, npmLockfilePackages, type NpmPackage } from './npm-lockfile.ts';
 import type { OsvEcosystem, PreparedDatabase } from './osv-database.ts';
 import type { Adapter, AdapterContext, Capability, CodexFinding, ProcessEngine, EngineRun, Finding, LegacyFinding, Plan, Severity } from './model.ts';
 
@@ -65,8 +66,17 @@ export function normalizeGitleaks(raw: unknown, context: AdapterContext): Legacy
     });
   });
 }
-export function normalizeOsv(raw: unknown, context: AdapterContext): LegacyFinding[] {
-  const findings: LegacyFinding[] = [];
+export interface OsvAdvisory {
+  readonly id: string; readonly aliases: string[]; readonly severity: string | null; readonly fixedVersions: string[];
+}
+export interface OsvPackage {
+  readonly lockfile: string; readonly ecosystem: string; readonly name: string; readonly version: string | null;
+  readonly dev: boolean | null; readonly matchingIncomplete: boolean; readonly advisories: OsvAdvisory[];
+}
+export interface OsvRun extends EngineRun { packages?: OsvPackage[] }
+
+function osvPackages(raw: unknown, context: AdapterContext, locks: ReadonlyMap<string, ReadonlyMap<string, readonly NpmPackage[]>> = new Map()): OsvPackage[] {
+  const packages: OsvPackage[] = [];
   for (const item of array(record(raw).results)) {
     const group = record(item);
     const file = location(record(group.source).path, context);
@@ -74,11 +84,16 @@ export function normalizeOsv(raw: unknown, context: AdapterContext): LegacyFindi
     for (const packageItem of array(group.packages)) {
       const entry = record(packageItem);
       const pkg = record(entry.package);
-      const identity = { name: identifier(pkg.name), version: identifier(pkg.version), ecosystem: identifier(pkg.ecosystem), direct: 'unknown' as const };
+      const name = identifier(pkg.name), ecosystem = identifier(pkg.ecosystem);
+      const version = typeof pkg.version === 'string' && pkg.version ? identifier(pkg.version) : null;
+      const entries = ecosystem === 'npm' ? matchingNpmPackages(locks.get(file)?.get(name) ?? [], name, version) : [];
+      const localSource = typeof pkg.purl === 'string' && /[?&]source=LOCAL(?:&|$)/.test(pkg.purl);
+      if (entries.some(entry => entry.local) && (localSource || entries.every(entry => entry.local))) continue;
+      const advisories: OsvAdvisory[] = [];
       for (const vulnerability of array(entry.vulnerabilities ?? [])) {
         const advisory = record(vulnerability);
-        const ids = [identifier(advisory.id), ...array(advisory.aliases ?? []).map(identifier)];
-        const level = severity(record(advisory.database_specific ?? {}).severity);
+        const id = identifier(advisory.id), aliases = [...new Set(array(advisory.aliases ?? []).map(identifier))].sort();
+        const level = record(advisory.database_specific ?? {}).severity;
         const fixed = new Set<string>();
         for (const affectedItem of array(advisory.affected ?? [])) {
           const affected = record(affectedItem);
@@ -89,15 +104,23 @@ export function normalizeOsv(raw: unknown, context: AdapterContext): LegacyFindi
             if (value !== undefined) fixed.add(identifier(value));
           }
         }
-        findings.push(makeFinding({ engine: 'osv', originIds: [...new Set(ids)].sort(), category: 'dependency', severity: level,
-          confidence: 'unknown', evidenceState: 'candidate', file, line: null, title: 'Advisory matches a declared dependency; applicability requires review',
-          package: identity, fixedVersions: [...fixed].sort(),
-        }));
+        advisories.push({ id, aliases, severity: typeof level === 'string' && /^[A-Za-z_-]{1,200}$/.test(level) ? level : null, fixedVersions: [...fixed].sort() });
       }
+      packages.push({ lockfile: file, name, ecosystem, version, dev: ecosystem === 'npm' ? entries.length > 0 && entries.every(entry => entry.dev) : null,
+        matchingIncomplete: version === null || (typeof pkg.purl === 'string' && pkg.purl.includes('source=LOCAL')), advisories });
     }
   }
+  return packages;
+}
+function osvFindings(packages: readonly OsvPackage[]): LegacyFinding[] {
+  const findings = packages.flatMap(pkg => pkg.version === null ? [] : pkg.advisories.map(advisory => makeFinding({
+    engine: 'osv', originIds: [...new Set([advisory.id, ...advisory.aliases])].sort(), category: 'dependency', severity: severity(advisory.severity),
+    confidence: 'unknown', evidenceState: 'candidate', file: pkg.lockfile, line: null, title: 'Advisory matches a declared dependency; applicability requires review',
+    package: { name: pkg.name, version: pkg.version!, ecosystem: pkg.ecosystem, direct: 'unknown' }, fixedVersions: advisory.fixedVersions,
+  })));
   return [...new Map(findings.map(f => [f.fingerprint, f])).values()];
 }
+export function normalizeOsv(raw: unknown, context: AdapterContext): LegacyFinding[] { return osvFindings(osvPackages(raw, context)); }
 export function normalizeCodex(raw: unknown, context: CodexContext): CodexFinding[] {
   const result = record(raw);
   const manifest = record(record(result.manifest).scan);
@@ -139,7 +162,11 @@ function codexFindings(input: unknown, scanId: unknown, context: CodexContext): 
 class ScannerAdapter implements Adapter {
   private controller = new AbortController();
   readonly engine: ProcessEngine;
-  constructor(engine: ProcessEngine) { this.engine = engine; }
+  private database?: PreparedDatabase;
+  private retainPackages: boolean;
+  constructor(engine: ProcessEngine, database?: PreparedDatabase, retainPackages = false) {
+    this.engine = engine; this.database = database; this.retainPackages = retainPackages;
+  }
   capabilities(): Capability {
     return { engine: this.engine, category: this.engine === 'gitleaks' ? 'secrets' : this.engine === 'osv' ? 'dependencies' : 'code',
       inputs: this.engine === 'osv' ? ['JS/TS lockfiles', 'Python lockfiles', 'Go modules', 'Rust Cargo.lock'] : ['tracked text snapshot'],
@@ -155,8 +182,8 @@ class ScannerAdapter implements Adapter {
   normalize(raw: unknown, context: AdapterContext): Finding[] {
     return this.engine === 'gitleaks' ? normalizeGitleaks(raw, context) : this.engine === 'osv' ? normalizeOsv(raw, context) : normalizeCodex(raw, context);
   }
-  async run(context: AdapterContext): Promise<EngineRun> {
-    const run = emptyRun(this.engine, context);
+  async run(context: AdapterContext): Promise<OsvRun> {
+    const run: OsvRun = emptyRun(this.engine, context);
     const tool = context.config.tools[this.engine];
     const signal = AbortSignal.any([context.signal, this.controller.signal]);
     if (signal.aborted) { run.execution = 'cancelled'; run.errors.push('cancelled_before_start'); return run; }
@@ -170,6 +197,14 @@ class ScannerAdapter implements Adapter {
         cwd: context.workspace, home: context.workspace, timeoutMs: context.config.timeoutMs,
         maxOutputBytes: context.config.maxOutputBytes, signal, target: context.plan.root,
       });
+      const locks = new Map<string, Map<string, NpmPackage[]>>();
+      if (this.engine === 'osv') for (const file of context.plan.lockfiles) if (path.posix.basename(file) === 'package-lock.json') {
+        const packages = new Map<string, NpmPackage[]>();
+        for (const entry of npmLockfilePackages(await readFile(path.join(context.snapshot, file)))) {
+          const instances = packages.get(entry.name) ?? []; instances.push(entry); packages.set(entry.name, instances);
+        }
+        locks.set(file, packages);
+      }
       const prepared = await this.arguments(context, run, signal);
       const invocation = await execute(tool, prepared.args, { cwd: context.workspace, home: context.workspace,
         timeoutMs: context.config.timeoutMs, maxOutputBytes: context.config.maxOutputBytes,
@@ -187,13 +222,13 @@ class ScannerAdapter implements Adapter {
       let raw: unknown;
       try { raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(invocation.stdout)); }
       catch { throw new SafeError('scanner_json_invalid'); }
-      run.findings = this.normalize(raw, context);
-      if ((invocation.code === 1) !== (run.findings.length > 0)) throw new SafeError('exit_report_disagreement');
+      const packages = this.engine === 'osv' ? osvPackages(raw, context, locks) : null;
+      run.findings = packages ? osvFindings(packages) : this.normalize(raw, context);
+      if (this.retainPackages && packages) run.packages = packages;
+      const reportedFindings = this.engine === 'osv' ? array(record(raw).results).some(r => array(record(r).packages).some(p => array(record(p).vulnerabilities ?? []).length)) : run.findings.length > 0;
+      if ((invocation.code === 1) !== reportedFindings) throw new SafeError('exit_report_disagreement');
       if (this.engine === 'osv') {
-        if (array(record(raw).results).some(r => array(record(r).packages).some(p => {
-          const pkg = record(record(p).package);
-          return typeof pkg.version !== 'string' || !pkg.version || (typeof pkg.purl === 'string' && pkg.purl.includes('source=LOCAL'));
-        }))) run.errors.push('offline_package_matching_incomplete');
+        if (packages!.some(pkg => pkg.matchingIncomplete)) run.errors.push('offline_package_matching_incomplete');
         const sources = array(record(raw).results).map(r => location(record(record(r).source).path, context));
         run.exclusions = context.plan.lockfiles.filter(file => !sources.includes(file));
         if (!sources.length) run.errors.push('no_dependency_coverage_receipt');
@@ -223,11 +258,13 @@ class ScannerAdapter implements Adapter {
     const config = path.join(context.workspace, 'osv-config.toml');
     await writeFile(config, '', { flag: 'wx', mode: 0o600 });
     const ecosystems: OsvEcosystem[] = [...new Set(context.plan.lockfiles.map(file => /(?:package-lock.json|pnpm-lock.yaml|yarn.lock)$/.test(file) ? 'npm' : /go\.(mod|sum)$/.test(file) ? 'Go' : /Cargo.lock$/.test(file) ? 'crates.io' : 'PyPI'))];
-    const database = await prepareOfflineDatabase({ source: context.config.osvDatabase, workspace: context.workspace, target: context.plan.root,
+    const database = this.database ?? await prepareOfflineDatabase({ source: context.config.osvDatabase, workspace: context.workspace, target: context.plan.root,
       ecosystems, maxMetadataBytes: context.config.maxOutputBytes, timeoutMs: context.config.timeoutMs, signal, copyBudget: context.copyBudget });
+    if (this.database) await verifyPreparedDatabase(database, context.plan.root, signal, context.config.timeoutMs);
     run.database.push(...database.observations);
     return { database, args: ['scan', 'source', '--offline', '--offline-vulnerabilities', '--no-resolve', '--no-call-analysis=all', '--config', config, '--format', 'json', '--all-packages', '--all-vulns',
       ...context.plan.lockfiles.flatMap(file => ['--lockfile', ':' + path.join(context.snapshot, file)])] };
   }
 }
 export function createAdapters(plan?: Plan): Adapter[] { return [new ScannerAdapter('gitleaks'), new ScannerAdapter('osv'), new ScannerAdapter('codex-security'), new RuntimeAdvisoryAdapter(), ...(plan?.schema === 'scanmux.plan/v3' ? [new TrivyAdapter()] : [])]; }
+export function createOsvAdapter(database?: PreparedDatabase): ScannerAdapter { return new ScannerAdapter('osv', database, true); }
