@@ -9,7 +9,7 @@ import { execute, verifyVersion } from './process.ts';
 import { prepareOfflineDatabase, verifyPreparedDatabase } from './osv-database.ts';
 import { JobDiskCopyLimitError } from './copy-budget.ts';
 import type { OsvEcosystem, PreparedDatabase } from './osv-database.ts';
-import type { Adapter, AdapterContext, Capability, ProcessEngine, EngineRun, Finding, LegacyFinding, Plan, Severity } from './model.ts';
+import type { Adapter, AdapterContext, Capability, CodexFinding, ProcessEngine, EngineRun, Finding, LegacyFinding, Plan, Severity } from './model.ts';
 
 const versions: Record<ProcessEngine, string> = { gitleaks: '8.30.1', osv: '2.7.0', 'codex-security': '0.5.1' };
 export const gitleaksConfig = '[extend]\nuseDefault = true\n';
@@ -33,9 +33,14 @@ const defaultExcludedPaths = [
 export function secretExclusions(plan: Plan): string[] {
   return plan.files.filter(file => defaultExcludedPaths.some(pattern => pattern.test(file.path))).map(file => file.path);
 }
-function location(raw: unknown, context: AdapterContext): string {
+type CodexContext = Pick<AdapterContext, 'plan'> & Partial<Pick<AdapterContext, 'snapshot'>>;
+function location(raw: unknown, context: CodexContext): string {
   if (typeof raw !== 'string') throw new SafeError('invalid_location');
-  const relative = path.isAbsolute(raw) ? path.relative(context.snapshot, raw).split(path.sep).join('/') : raw.replaceAll('\\', '/');
+  let relative = raw.replaceAll('\\', '/');
+  if (path.isAbsolute(raw)) {
+    if (!context.snapshot || !path.isAbsolute(context.snapshot)) throw new SafeError('location_outside_snapshot');
+    relative = path.relative(context.snapshot, raw).split(path.sep).join('/');
+  }
   const name = safeRelative(relative);
   if (!context.plan.files.some(f => f.path === name)) throw new SafeError('location_outside_snapshot');
   return name;
@@ -45,8 +50,8 @@ function severity(input: unknown): Severity {
   const normalized = input.toLowerCase();
   return ['critical', 'high', 'medium', 'low', 'informational'].includes(normalized) ? normalized as Severity : 'unknown';
 }
-function makeFinding(fields: Omit<LegacyFinding, 'fingerprint' | 'disposition' | 'reachability' | 'knownExploited'>): LegacyFinding {
-  return { ...fields, fingerprint: digest([fields.engine, fields.originIds, fields.file, fields.line, fields.package]), disposition: 'open', reachability: 'unknown', knownExploited: 'unknown' };
+function makeFinding<T extends Omit<LegacyFinding | CodexFinding, 'fingerprint' | 'disposition' | 'reachability' | 'knownExploited'>>(fields: T) {
+  return { ...fields, fingerprint: digest([fields.engine, fields.originIds, fields.file, fields.line, fields.package]), disposition: 'open' as const, reachability: 'unknown' as const, knownExploited: 'unknown' as const };
 }
 export function normalizeGitleaks(raw: unknown, context: AdapterContext): LegacyFinding[] {
   return array(raw).map(item => {
@@ -93,7 +98,7 @@ export function normalizeOsv(raw: unknown, context: AdapterContext): LegacyFindi
   }
   return [...new Map(findings.map(f => [f.fingerprint, f])).values()];
 }
-export function normalizeCodex(raw: unknown, context: AdapterContext): LegacyFinding[] {
+export function normalizeCodex(raw: unknown, context: CodexContext): CodexFinding[] {
   const result = record(raw);
   const manifest = record(record(result.manifest).scan);
   const target = record(manifest.target);
@@ -101,7 +106,7 @@ export function normalizeCodex(raw: unknown, context: AdapterContext): LegacyFin
   return codexFindings(result.findings, manifest.id, context);
 }
 /** Mapping comes from this invocation's completed projection, never a saved report. */
-export function normalizeProjectedCodex(raw: unknown, mappingInput: unknown, context: AdapterContext): LegacyFinding[] {
+export function normalizeProjectedCodex(raw: unknown, mappingInput: unknown, context: CodexContext): CodexFinding[] {
   const mapping = record(mappingInput), result = record(raw), manifest = record(record(result.manifest).scan), target = record(manifest.target);
   if (mapping.schema !== 'scanmux.sdk-projection/v1' || mapping.originalCommit !== context.plan.commit || mapping.originalTree !== context.plan.treeHash
     || mapping.planHash !== context.plan.planHash || mapping.snapshotHash !== context.plan.snapshotHash || mapping.projectionScope !== 'accepted_files_only'
@@ -110,19 +115,22 @@ export function normalizeProjectedCodex(raw: unknown, mappingInput: unknown, con
     || target.revision !== mapping.derivedRevision) throw new SafeError('codex_projection_mismatch');
   return codexFindings(result.findings, manifest.id, context);
 }
-function codexFindings(input: unknown, scanId: unknown, context: AdapterContext): LegacyFinding[] {
+function codexFindings(input: unknown, scanId: unknown, context: CodexContext): CodexFinding[] {
   const document = record(input);
   if (document.documentType !== 'codex-security.findings' || document.schemaVersion !== '1.0' || document.scanId !== scanId) throw new SafeError('invalid_codex_report');
   return array(document.findings).flatMap(item => {
     const row = record(item);
     return array(row.locations).map(loc => {
       const position = record(loc);
-      if (!Number.isSafeInteger(position.startLine) || Number(position.startLine) < 1) throw new SafeError('invalid_line');
+      const line = position.startLine, endLine = position.endLine ?? null;
+      if (!Number.isSafeInteger(line) || Number(line) < 1
+        || (endLine !== null && (!Number.isSafeInteger(endLine) || Number(endLine) < Number(line)))) throw new SafeError('invalid_line');
+      const file = location(position.path, context);
       const confidence = record(row.confidence).level;
       if (!['high', 'medium', 'low'].includes(String(confidence))) throw new SafeError('invalid_confidence');
       return makeFinding({ engine: 'codex-security', originIds: [identifier(row.findingId), identifier(row.ruleId)],
         category: 'code', severity: severity(record(row.severity).level), confidence: confidence as 'high' | 'medium' | 'low',
-        evidenceState: 'candidate', file: location(position.path, context), line: Number(position.startLine),
+        evidenceState: 'candidate', file, line: Number(line), ...(endLine === null ? {} : { endLine: Number(endLine) }),
         title: 'AI candidate; human confirmation required', fixedVersions: [],
       });
     });

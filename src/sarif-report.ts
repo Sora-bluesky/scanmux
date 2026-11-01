@@ -45,7 +45,7 @@ function result(finding: Finding) {
   let uri: string | undefined;
   try { if (finding.file !== null) uri = safeRelative(finding.file).split('/').map(segment => encodeURIComponent(segment)).join('/'); } catch { /* Omit unsupported locations, never the finding. */ }
   const line = Number.isSafeInteger(finding.line) && finding.line! > 0 ? finding.line! : undefined;
-  const endLine = finding.engine === 'trivy' && line !== undefined && Number.isSafeInteger(finding.endLine) && finding.endLine! >= line ? finding.endLine! : undefined;
+  const endLine = (finding.engine === 'trivy' || finding.engine === 'codex-security') && line !== undefined && Number.isSafeInteger(finding.endLine) && finding.endLine! >= line ? finding.endLine! : undefined;
   if ((engine === 'trivy') !== (category === 'misconfiguration') || engine === 'trivy' && evidenceState !== 'candidate') throw new SafeError('invalid_sarif_report');
   return {
     ruleId: `scanmux/${engine}/${category}`,

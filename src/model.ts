@@ -121,9 +121,10 @@ interface FindingFields {
   fixedVersions: string[]; reachability: 'unknown'; knownExploited: 'unknown';
   advisory?: import('./advisory-catalog.ts').Advisory;
 }
-export interface LegacyFinding extends FindingFields { engine: Exclude<Engine, 'trivy'>; category: 'secret' | 'dependency' | 'code' | 'runtime'; file: string; endLine?: never }
+export interface LegacyFinding extends FindingFields { engine: Exclude<Engine, 'trivy' | 'codex-security'>; category: 'secret' | 'dependency' | 'code' | 'runtime'; file: string; endLine?: never }
+export interface CodexFinding extends Omit<LegacyFinding, 'engine' | 'endLine'> { engine: 'codex-security'; endLine?: number | null }
 export interface TrivyFinding extends FindingFields { engine: 'trivy'; category: 'misconfiguration'; evidenceState: 'candidate'; file: string | null; endLine: number | null }
-export type Finding = LegacyFinding | TrivyFinding;
+export type Finding = LegacyFinding | CodexFinding | TrivyFinding;
 export type DeclarationReason = 'exact_declaration' | 'invalid_version' | 'ambiguous_declaration' | 'unsupported_docker_syntax'
   | 'unsupported_image' | 'unsupported_image_variant' | 'dynamic_image' | 'npm_alias' | 'npm_link' | 'npm_source' | 'npm_entry_ambiguous';
 export interface Declaration {

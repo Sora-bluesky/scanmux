@@ -116,3 +116,24 @@ test('mapping-aware normalization preserves the original plan and rejects every 
   for (const key of ['originalCommit','originalTree','planHash','snapshotHash','derivedRevision']) { const changed = structuredClone(mapping); changed[key] = '0'.repeat(changed[key].length); assert.throws(() => normalizeProjectedCodex(raw, changed, context), /codex_projection_mismatch/); }
   const changed = structuredClone(mapping); changed.manifest[0].sha256 = '0'.repeat(64); assert.throws(() => normalizeProjectedCodex(raw, changed, context), /codex_projection_mismatch/);
 });
+
+test('projected Codex ranges need no local snapshot and retain all structural checks', () => {
+  const config = structuredClone(defaults), plan = source(config);
+  const mapping = { schema: 'scanmux.sdk-projection/v1', originalCommit: plan.commit, originalTree: plan.treeHash, planHash: plan.planHash, snapshotHash: plan.snapshotHash, projectionScope: 'accepted_files_only', projectedMode: '100644', derivedRevision: 'f'.repeat(40), manifest: plan.files.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 })) };
+  const position = { path: 'source.ts', startLine: 1, endLine: 2 };
+  const raw = { manifest: { scan: { id: 'fixture-scan', target: { revision: mapping.derivedRevision } } }, findings: { documentType: 'codex-security.findings', schemaVersion: '1.0', scanId: 'fixture-scan', findings: [{ findingId: 'fixture-finding', ruleId: 'fixture-rule', severity: { level: 'high' }, confidence: { level: 'high' }, locations: [position] }] } };
+  for (const context of [{ plan, config }, { plan, config, snapshot: '' }]) {
+    const before = structuredClone({ plan, raw, mapping });
+    const finding = normalizeProjectedCodex(raw, mapping, context)[0];
+    assert.equal(finding.line, 1); assert.equal(finding.endLine, 2);
+    assert.deepEqual({ plan, raw, mapping }, before);
+    for (const endLine of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '2', true]) {
+      const changed = structuredClone(raw); changed.findings.findings[0].locations[0].endLine = endLine;
+      assert.throws(() => normalizeProjectedCodex(changed, mapping, context), /invalid_line/);
+    }
+    for (const location of [{ ...position, startLine: 3 }, { ...position, startLine: 0 }, { ...position, path: '../source.ts' }, { ...position, path: path.resolve('source.ts') }]) {
+      const changed = structuredClone(raw); changed.findings.findings[0].locations = [location];
+      assert.throws(() => normalizeProjectedCodex(changed, mapping, context));
+    }
+  }
+});
