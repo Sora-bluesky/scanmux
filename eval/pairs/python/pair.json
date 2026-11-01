@@ -1,0 +1,12 @@
+{
+  "language": "Python",
+  "ecosystem": "PyPI",
+  "package": "PyYAML",
+  "advisory": "CVE-2020-14343 / PYSEC-2021-142",
+  "lockfile": "requirements.txt",
+  "testDirectory": "tests/repro",
+  "sizeLimitBytes": 2000000,
+  "reproduces": true,
+  "base": { "version": "5.3.1", "versionFile": "vendor/pyyaml/yaml/__init__.py" },
+  "head": { "version": "5.4", "versionFile": "vendor/pyyaml/yaml/__init__.py" }
+}

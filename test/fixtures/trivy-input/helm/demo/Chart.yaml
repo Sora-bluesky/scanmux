@@ -1,0 +1,5 @@
+apiVersion: v2
+name: insecure-demo
+description: Synthetic offline security scan fixture
+type: application
+version: 0.1.0

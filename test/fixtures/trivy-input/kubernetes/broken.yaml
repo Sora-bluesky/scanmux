@@ -1,0 +1,6 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-demo
+spec:
+  template: [this is not closed

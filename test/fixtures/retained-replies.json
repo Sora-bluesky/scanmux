@@ -1,0 +1,335 @@
+{
+  "schema": "scanmux.synthetic-retained-replies/v1",
+  "scope": "native-component-counters-with-synthetic-identities-not-product-cli-evidence",
+  "cases": [
+    {
+      "name": "reserved-metadata",
+      "result": {
+        "schema": "scanmux.retained-write-result/v1",
+        "result": "committed",
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "intentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "slots": [
+          1
+        ],
+        "proposedAllocatedBytes": 4096,
+        "availableIntermediateBytes": 229376,
+        "before": {
+          "allocatedBytes": 4096,
+          "reservedBytes": 94208,
+          "allocatedLimit": 323584,
+          "clusterBytes": 4096,
+          "files": [
+            {
+              "slot": 0,
+              "bytes": 39,
+              "allocatedBytes": 4096
+            }
+          ]
+        },
+        "after": {
+          "allocatedBytes": 8192,
+          "reservedBytes": 90112,
+          "allocatedLimit": 323584,
+          "clusterBytes": 4096,
+          "files": [
+            {
+              "slot": 0,
+              "bytes": 39,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 1,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            }
+          ]
+        }
+      },
+      "parts": [
+        {
+          "name": "host-job-failure.json",
+          "text": "{\"record\":1}\n"
+        }
+      ],
+      "policy": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "intentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "maximum": 8193,
+        "allocatedBytes": 323584,
+        "clusterBytes": 4096
+      }
+    },
+    {
+      "name": "checkpoint-pair",
+      "result": {
+        "schema": "scanmux.retained-write-result/v1",
+        "result": "committed",
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "intentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "slots": [
+          11,
+          12
+        ],
+        "proposedAllocatedBytes": 8192,
+        "availableIntermediateBytes": 278528,
+        "before": {
+          "allocatedBytes": 40960,
+          "reservedBytes": 4096,
+          "allocatedLimit": 323584,
+          "clusterBytes": 4096,
+          "files": [
+            {
+              "slot": 0,
+              "bytes": 39,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 1,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 3,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 4,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 5,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 6,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 7,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 8,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 9,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 10,
+              "bytes": 14,
+              "allocatedBytes": 4096
+            }
+          ]
+        },
+        "after": {
+          "allocatedBytes": 49152,
+          "reservedBytes": 4096,
+          "allocatedLimit": 323584,
+          "clusterBytes": 4096,
+          "files": [
+            {
+              "slot": 0,
+              "bytes": 39,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 1,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 3,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 4,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 5,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 6,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 7,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 8,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 9,
+              "bytes": 13,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 10,
+              "bytes": 14,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 11,
+              "bytes": 12,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 12,
+              "bytes": 15,
+              "allocatedBytes": 4096
+            }
+          ]
+        }
+      },
+      "parts": [
+        {
+          "name": "checkpoints/checkpoint-1.json",
+          "text": "{\"body\":11}\n"
+        },
+        {
+          "name": "checkpoints/commit-1.json",
+          "text": "{\"receipt\":11}\n"
+        }
+      ],
+      "policy": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "intentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "maximum": 8193,
+        "allocatedBytes": 323584,
+        "clusterBytes": 4096
+      }
+    },
+    {
+      "name": "allocation-refusal",
+      "result": {
+        "schema": "scanmux.retained-write-result/v1",
+        "result": "retained_allocated_limit",
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "intentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "slots": [
+          15,
+          16
+        ],
+        "proposedAllocatedBytes": 24576,
+        "availableIntermediateBytes": 0,
+        "before": {
+          "allocatedBytes": 65536,
+          "reservedBytes": 94208,
+          "allocatedLimit": 159744,
+          "clusterBytes": 4096,
+          "files": [
+            {
+              "slot": 0,
+              "bytes": 39,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 10,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 11,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 12,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 13,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 14,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            }
+          ]
+        },
+        "after": {
+          "allocatedBytes": 69632,
+          "reservedBytes": 90112,
+          "allocatedLimit": 159744,
+          "clusterBytes": 4096,
+          "files": [
+            {
+              "slot": 0,
+              "bytes": 39,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 2,
+              "bytes": 395,
+              "allocatedBytes": 4096
+            },
+            {
+              "slot": 10,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 11,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 12,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 13,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            },
+            {
+              "slot": 14,
+              "bytes": 8193,
+              "allocatedBytes": 12288
+            }
+          ]
+        }
+      },
+      "parts": [
+        {
+          "name": "checkpoints/checkpoint-3.json",
+          "zeroBytes": 8193
+        },
+        {
+          "name": "checkpoints/commit-3.json",
+          "zeroBytes": 8193
+        }
+      ],
+      "policy": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "intentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "maximum": 8193,
+        "allocatedBytes": 159744,
+        "clusterBytes": 4096
+      }
+    }
+  ]
+}

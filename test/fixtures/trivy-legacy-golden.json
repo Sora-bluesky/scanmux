@@ -1,0 +1,85 @@
+{
+  "base": "4e00c54881bb907e6783011847ae7cd6b85a6b27",
+  "config": {
+    "bytes": 247,
+    "sha256": "fa29e80009c28284ec2ec41b0ba6b71f215f2962e32791b521d3daf8c1a69f26"
+  },
+  "policyHash": "fa29e80009c28284ec2ec41b0ba6b71f215f2962e32791b521d3daf8c1a69f26",
+  "plan": {
+    "bytes": 2442,
+    "sha256": "ca3eff7844ae2c29ca3596b26fc76c0be4da387c218d777426fefc721e027d3a"
+  },
+  "planHash": "ccaa4bcfb1aa11c2790afd3f7ed3564810246f39dc3e3d7cf5daa05de2d48cdb",
+  "snapshotHash": "3985da7d5dac572c1149c6e30d56f7e6e5391eac3374e29527dcf9e16fb53a30",
+  "adapterOrder": [
+    "gitleaks",
+    "osv",
+    "codex-security",
+    "runtime-advisories"
+  ],
+  "requiredOrder": [
+    "gitleaks",
+    "osv",
+    "codex-security",
+    "runtime-advisories"
+  ],
+  "engineOrder": [
+    "gitleaks",
+    "osv",
+    "codex-security",
+    "runtime-advisories"
+  ],
+  "findingOrder": [
+    {
+      "engine": "gitleaks",
+      "fingerprint": "a02624db9d3ac280bf4b62c3a8c05dd734c8d8e4fbe9f9a2dcc9e0a32458535a",
+      "originIds": [
+        "example-rule"
+      ]
+    },
+    {
+      "engine": "osv",
+      "fingerprint": "afa919534786309daf929cb72224e5391d58a285c98576cafac54b9e5696c6a5",
+      "originIds": [
+        "CVE-2026-12345",
+        "GHSA-example-1234"
+      ]
+    },
+    {
+      "engine": "codex-security",
+      "fingerprint": "7700ce9234297c5b6cafae733c23991b7da494f7568df145b99b24efae46fe74",
+      "originIds": [
+        "f1",
+        "cwe-79"
+      ]
+    }
+  ],
+  "report": {
+    "bytes": 8662,
+    "sha256": "6f7135715be1a22a418db801bde744b7599eacb8ab088c7aab54d31dd7983abb"
+  },
+  "html": {
+    "ja": {
+      "bytes": 14822,
+      "sha256": "7bb5cb48133ee886acaf5a0de41fe8787e5523625709e277272f231dc47189e4"
+    },
+    "en": {
+      "bytes": 14756,
+      "sha256": "7dbd558773ddbf80b0039d01129345280852ca0cd2b9b9c5b22c4bb04a70740b"
+    }
+  },
+  "sarif": [
+    {
+      "name": "report.sarif",
+      "findings": 3,
+      "text": {
+        "bytes": 7848,
+        "sha256": "070672207c312f3111b4c8a44ce77aa38876269a3218e2eb30953c1f4e5f511b"
+      },
+      "gzip": {
+        "bytes": 1443,
+        "sha256": "f3932b376b264c576ea30567f398ede15e323bee1e38c0a055e89e5070355791"
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "language": "JS/TS",
+  "ecosystem": "npm",
+  "package": "lodash",
+  "advisory": "GHSA-35jh-r3h4-6jhm / CVE-2021-23337",
+  "lockfile": "package-lock.json",
+  "testDirectory": "tests/repro",
+  "sizeLimitBytes": 2000000,
+  "reproduces": true,
+  "base": { "version": "4.17.20", "versionFile": "vendor/lodash/package.json" },
+  "head": { "version": "4.17.21", "versionFile": "vendor/lodash/package.json" }
+}

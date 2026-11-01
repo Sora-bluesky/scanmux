@@ -1,0 +1,62 @@
+{
+  "name": "scanmux",
+  "version": "0.1.0",
+  "description": "Local security scanner orchestration with explicit coverage and evidence",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
+  "bin": {
+    "scanmux": "bin/scanmux.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "internal/ai-session.mjs",
+    "internal/response-protocol.mjs",
+    "internal/responses-transport.mjs",
+    "internal/projected-repository.mjs",
+    "internal/hosted-channel.mjs",
+    "internal/hosted-mcp.mjs",
+    "internal/hosted-executor.mjs",
+    "internal/hosted-bridge.mjs",
+    "internal/linux-hosted-runner.mjs",
+    "internal/linux-hosted-worker.mjs",
+    "internal/worker-resources.mjs",
+    "internal/worker-resources.d.mts",
+    "internal/sdk-initialization-observer.mjs",
+    "internal/sdk-native-observer.py",
+    "internal/job-channel.mjs",
+    "internal/job-channel.d.mts",
+    "internal/linux-job-controller.mjs",
+    "internal/reproduction-driver.mjs",
+    "internal/linux-job-supervisor.py",
+    "internal/windows-job-owner.cs",
+    "internal/windows-retained-store.cs",
+    "internal/windows-job-worker.mjs",
+    "scripts/build-windows-job-owner.ps1",
+    "internal/windows-process-owner.cs",
+    "scripts/build-windows-process-owner.ps1",
+    "README.md",
+    "README.ja.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "scanmux": "node bin/scanmux.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify:real": "node scripts/verify-real.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "jose": "6.2.13",
+    "openai": "7.42.0",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  }
+}

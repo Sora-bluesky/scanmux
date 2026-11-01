@@ -1,0 +1,86 @@
+name: offline-selfscan
+run-name: offline-selfscan scenario=${{ inputs.scenario || 'none' }}
+
+on:
+  workflow_run:
+    workflows: [checks]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Failure demonstration
+        type: choice
+        default: none
+        options: [none, tool-fetch-fail, db-fetch-fail, hash-mismatch, skip-scan, skip-upload, cancel-wait]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: offline-selfscan-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  selfscan:
+    name: selfscan
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Use runner temp
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Encoding utf8 -Value "TEMP=$env:RUNNER_TEMP"
+          Add-Content -Path $env:GITHUB_ENV -Encoding utf8 -Value "TMP=$env:RUNNER_TEMP"
+      - name: Configure git line endings
+        run: git config --global core.autocrlf false
+      - name: Check out controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - name: Install controller
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Prepare target
+        run: node scripts/ci-produce.mjs target
+      - name: Acquire tools
+        run: node scripts/ci-produce.mjs acquire
+      - name: Fetch OSV database
+        run: node scripts/ci-produce.mjs database
+      - name: Derive config
+        run: node scripts/ci-produce.mjs config
+      - name: Plan
+        run: node scripts/ci-produce.mjs plan
+      - name: Wait for cancellation
+        run: node scripts/ci-produce.mjs wait
+      - name: Scan
+        if: ${{ success() && !(github.event_name == 'workflow_dispatch' && inputs.scenario == 'skip-scan') }}
+        run: node scripts/ci-produce.mjs scan
+      - name: CI check
+        run: node scripts/ci-produce.mjs check
+      - name: Seal manifest
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-produce.mjs seal
+      - name: Upload delivery
+        id: upload
+        if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.scenario == 'skip-upload') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scanmux-selfscan-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scanmux/delivery/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+      - name: Anchor delivery
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        env:
+          SCANMUX_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: node scripts/ci-produce.mjs anchor
+      - name: Gate
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-produce.mjs gate

@@ -1,0 +1,8 @@
+node_modules/
+*.tgz
+.local/
+.tools/
+site/
+.claude/
+.codex/
+.openai/

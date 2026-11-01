@@ -1,0 +1,9 @@
+{
+  "name": "scanmux-eval-lodash",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vulnerable/fixed pair for lodash template code injection (GHSA-35jh-r3h4-6jhm).",
+  "dependencies": {
+    "lodash": "4.17.20"
+  }
+}

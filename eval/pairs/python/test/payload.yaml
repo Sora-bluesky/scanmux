@@ -1,0 +1,6 @@
+--- !!python/object/new:type
+args:
+  - "scanmux_probe"
+  - !!python/tuple []
+  - "__setstate__": !!python/name:exec
+state: "import os, pathlib; pathlib.Path(os.environ['SCANMUX_MARKER_PATH']).write_text('73', encoding='ascii')"

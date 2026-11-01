@@ -1,0 +1,51 @@
+name: checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Use runner temp
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Encoding utf8 -Value "TEMP=$env:RUNNER_TEMP"
+          Add-Content -Path $env:GITHUB_ENV -Encoding utf8 -Value "TMP=$env:RUNNER_TEMP"
+      - name: Configure git line endings
+        run: git config --global core.autocrlf false
+      - name: Check out head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Acquire tools
+        run: node scripts/ci-produce.mjs acquire
+      - name: Fetch OSV database
+        run: node scripts/ci-produce.mjs database
+      - name: Derive config
+        run: node scripts/ci-produce.mjs config
+      - name: Release log
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci-release-log.ts
+      - name: Test
+        env:
+          SCANMUX_REAL_CONFIG: ${{ runner.temp }}\scanmux\state\test-config.json
+        run: npm test

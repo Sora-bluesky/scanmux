@@ -1,0 +1,37 @@
+ScanMux
+Copyright 2026 ScanMux contributors
+
+ScanMux's own source code and fixtures are licensed under MIT.
+The third-party files listed below retain their own licenses and notices.
+Third-party scanner executables, complete rule sets, vulnerability databases,
+model services, and account entitlements are separate and are not included in
+this package.
+See README.md for versions, sources, and verification limits.
+
+The optional Linux connection diagnostic uses ws 8.22.0 (MIT), installed as a
+pinned npm dependency. Its license is distributed with that dependency.
+
+test/fixtures/codex-security-draft-input-schema.json contains the draft tool input
+schema published in @openai/codex-security 0.5.1 (Apache-2.0).
+
+test/fixtures/trivy-offline.json contains output from Trivy 0.76.1 (Apache-2.0),
+including Trivy rule text and reference URLs.
+Source: https://github.com/aquasecurity/trivy/tree/v0.76.1
+License: https://github.com/aquasecurity/trivy/blob/v0.76.1/LICENSE
+
+src/adapters.ts records the global path allowlist regular expressions from
+Gitleaks 8.30.1 (MIT) as coverage exclusions.
+Source: https://github.com/gitleaks/gitleaks/tree/v8.30.1
+License: https://github.com/gitleaks/gitleaks/blob/v8.30.1/LICENSE
+
+src/advisory-catalog.ts records advisory identifiers and affected and fixed
+versions from public security advisories by PHP, Node.js, Next.js, NGINX,
+GitLab and Apache Tomcat. Each record links its source; no advisory text is
+copied.
+
+The evaluation pairs under eval/pairs/ vendor the minimal files of released
+dependencies, at the exact versions, for offline regression tests:
+- lodash 4.17.20 and 4.17.21 (MIT) in eval/pairs/js/, with its LICENSE.
+- PyYAML 5.3.1 and 5.4 (MIT) in eval/pairs/python/, with its LICENSE.
+golang.org/x/text v0.3.6 and v0.3.7 (BSD-3-Clause) are named by version in
+eval/pairs/go/*/go.mod only; their source is not vendored.

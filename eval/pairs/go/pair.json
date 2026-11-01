@@ -1,0 +1,14 @@
+{
+  "language": "Go",
+  "ecosystem": "Go",
+  "package": "golang.org/x/text",
+  "advisory": "GO-2021-0113 / CVE-2021-38561",
+  "lockfile": "go.mod",
+  "testDirectory": null,
+  "sizeLimitBytes": 2000000,
+  "reproduces": false,
+  "scannerOnly": true,
+  "scannerOnlyReason": "The offline reproduce job mounts /tmp and /work as noexec tmpfs and all source read-only, so a freshly compiled Go binary cannot be executed (go run and go test fail); the default job image also has no Go toolchain. Go has no interpreted mode, so the panic cannot be driven in-process the way node and python3 drive the JS and Python oracles. Scanner (OSV) evidence stands on the go.mod version alone.",
+  "base": { "version": "v0.3.6" },
+  "head": { "version": "v0.3.7" }
+}
