@@ -84,6 +84,17 @@ test('links to installed packages preserve registry locality and development fla
   }
 });
 
+test('installed packages keep their own names when a link points at them', () => {
+  for (const lockfileVersion of [2, 3]) {
+    const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion, packages: {
+      'node_modules/example': { version: '1.1.0' },
+      'node_modules/alias': { link: true, resolved: 'node_modules/example' },
+    } })));
+    assert.equal(packages[0]!.name, 'example');
+    assert.equal(matchingNpmPackages(packages, 'example', '1.1.0').length, 1);
+  }
+});
+
 test('scoped packages named node_modules retain their names through nested installations and links', () => {
   for (const lockfileVersion of [2, 3]) {
     const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion, packages: {

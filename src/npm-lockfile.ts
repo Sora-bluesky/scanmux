@@ -43,7 +43,7 @@ export function npmLockfilePackages(bytes: Uint8Array): NpmPackage[] {
         const target = entry.link === true && typeof entry.resolved === 'string' ? packages[entry.resolved] : undefined;
         const linked = target === undefined ? {} : record(target);
         const name = typeof entry.name === 'string' ? entry.name : typeof linked.name === 'string' ? linked.name
-          : linkNames.get(key) ?? packageNameFromPath(key);
+          : key.split('/').includes('node_modules') ? packageNameFromPath(key) : linkNames.get(key) ?? packageNameFromPath(key);
         // Installed dependencies inside a workspace are still registry packages.
         const matches = (pattern: string) => path.posix.matchesGlob(key, pattern.replace(/^\.\//, '').replace(/\/$/, ''));
         const workspace = !key.split('/').includes('node_modules') && patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
