@@ -224,27 +224,28 @@ async function doctor(config: Config, workspace: string) {
 }
 export async function main(argv: string[], dependencies?: { ai?: SyntheticAiRuntime }): Promise<number> {
   const cleanup = new SourceCleanupOwner();
+  const invocation: { command?: string } = {};
   return withSourceCleanup(cleanup, async () => {
     let code = 4;
-    try { code = await runMain(argv, dependencies); }
+    try { code = await runMain(argv, dependencies, invocation); }
     finally {
       await cleanup.cleanup();
       if (sourceCleanupFailed()) {
-        code = argv[0] === 'deps' ? 2 : 4;
+        code = invocation.command === 'deps' ? 2 : 4;
         process.stderr.write(JSON.stringify({ ...JSON.parse(staticError('source_cleanup_failed')), exitCode: code }) + '\n');
       }
     }
     return code;
   });
 }
-async function runMain(argv: string[], dependencies?: { ai?: SyntheticAiRuntime }): Promise<number> {
+async function runMain(argv: string[], dependencies: { ai?: SyntheticAiRuntime } | undefined, invocation: { command?: string }): Promise<number> {
   const commandStarted = performance.now();
   const abort = new AbortController();
   const stop = () => abort.abort();
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
-  let command: string | undefined = argv[0] === 'deps' ? 'deps' : undefined;
+  let command: string | undefined;
   try {
-    const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: {
+    const options = {
       config: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' }, 'site-origin': { type: 'string' },
       base: { type: 'string' }, head: { type: 'string' },
       'ci-run': { type: 'string' }, 'ci-job': { type: 'string' },
@@ -260,7 +261,10 @@ async function runMain(argv: string[], dependencies?: { ai?: SyntheticAiRuntime 
       repo: { type: 'string' }, run: { type: 'string' }, attempt: { type: 'string' }, 'from-dir': { type: 'string' },
       commit: { type: 'string' }, 'expect-head': { type: 'string' }, 'log-commit': { type: 'string' }, installed: { type: 'string' }, pin: { type: 'string' },
       store: { type: 'string' }, 'max-age-hours': { type: 'string' }, 'require-fresh': { type: 'boolean' },
-    } });
+    } as const;
+    command = parseArgs({ args: argv, allowPositionals: true, options, strict: false }).positionals[0];
+    invocation.command = command;
+    const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options });
     if (values.help || !positionals.length) { process.stdout.write(help); return 0; }
     const target = positionals[1];
     command = positionals[0];

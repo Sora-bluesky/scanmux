@@ -76,6 +76,34 @@ async function invoke(args: string[]) {
     for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value;
   }
 }
+
+test('deps argument failures use exit 2 when options precede the command', async () => {
+  for (const args of [
+    ['deps', '.', '--unknown-option'],
+    ['--json', 'deps', '.', '--unknown-option'],
+    ['--config', 'unused.json', '--json', 'deps', '.', '--unknown-option'],
+    ['--config=unused.json', 'deps', '.', '--unknown-option'],
+    ['--json', '--', 'deps', '.', 'extra'],
+  ]) {
+    const result = await invoke(args);
+    assert.equal(result.exitCode, 2, args.join(' ')); assert.equal(result.output, '');
+    assert.equal(JSON.parse(result.error).exitCode, 2, args.join(' '));
+  }
+});
+
+test('deps in an option value or later positional does not change other commands failure exits', async () => {
+  for (const args of [
+    ['--json', 'scan', 'deps', '--unknown-option'],
+    ['--config', 'deps', 'scan', '.', '--unknown-option'],
+    ['--config=deps', 'scan', '.', '--unknown-option'],
+    ['--json', 'import', 'deps', '--unknown-option'],
+  ]) {
+    const result = await invoke(args);
+    assert.equal(result.exitCode, 4, args.join(' ')); assert.equal(result.output, '');
+    assert.equal(JSON.parse(result.error).exitCode, 4, args.join(' '));
+  }
+});
+
 test('deps --json on a base/head pair reports the diff, OSV-based upgrades, the closed schema and exit 0', { skip: realConfigSkip }, async () => {
   const beforeStatus = git(['status', '--porcelain']);
   const beforeMetadata = (await fs.readdir(path.join(repo, '.git'), { recursive: true })).sort();

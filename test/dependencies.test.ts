@@ -232,6 +232,58 @@ test('workspace links and declared workspace paths do not make OSV incomplete, i
   await cleanup.sourceCleanupFor(scanWorkspace).cleanup(scanWorkspace);
 });
 
+test('scoped registry advisories retain their names and development flags alongside local packages', async () => {
+  const name = '@example-node_modules/shared';
+  const vulnerability = { ...advisory('GHSA-registry'), affected: [{ package: { name, ecosystem: 'npm' },
+    ranges: [{ events: [{ introduced: '0' }, { fixed: '2.1.0' }] }] }] };
+  for (const local of [false, true]) {
+    const content = lock('1.1.0', local ? {
+      'packages/local': { name },
+      [`node_modules/${name}`]: { link: true, resolved: 'packages/local' },
+      'node_modules/parent': { version: '1.0.0', dev: true, dependencies: { [name]: '^2.0.0' } },
+      [`node_modules/parent/node_modules/${name}`]: { version: '2.0.0', dev: true },
+    } : { [`node_modules/${name}`]: { version: '2.0.0', dev: true } }, { workspaces: ['packages/*'] });
+    const f = await fixture({ headFiles: { ...files('1.1.0'), 'package-lock.json': content }, extraPackages: [
+      ...(local ? [{ package: { name, ecosystem: 'npm', purl: `pkg:npm/${name}?source=LOCAL` } },
+        { package: { name: 'parent', version: '1.0.0', ecosystem: 'npm' } }] : []),
+      { package: { name, version: '2.0.0', ecosystem: 'npm' }, vulnerabilities: [vulnerability] },
+    ] });
+    const report = await f.analyze(false);
+    assert.equal(report.exitCode, 10); assert.equal(report.osv.state, 'completed');
+    assert.deepEqual(report.advisories.map(item => [item.package, item.id, item.headVersion, item.dev, item.status]),
+      [[name, 'GHSA-registry', '2.0.0', true, 'present']]);
+  }
+});
+
+test('declared file links and their targets remain local without workspace declarations on both sides', async () => {
+  for (const version of [null, '1.0.0']) {
+    const content = lock('1.1.0', {
+      'node_modules/local': { link: true, resolved: 'packages/local' },
+      'packages/local': version === null ? {} : { version },
+    }, { dependencies: { example: '^1.0.0', local: 'file:packages/local' } });
+    const manifest = JSON.stringify({ name: 'app', dependencies: { example: '^1.0.0', local: 'file:packages/local' } });
+    const committed = { ...files('1.1.0'), 'package.json': manifest, 'package-lock.json': content };
+    const f = await fixture({ baseFiles: committed, headFiles: committed, extraPackages: [{ package: { name: 'local', ecosystem: 'npm' } }] });
+    const report = await f.analyze();
+    assert.equal(report.exitCode, 0); assert.equal(report.osv.state, 'completed');
+    assert.equal(report.osv.sides.base?.state, 'completed'); assert.equal(report.osv.sides.head.state, 'completed');
+    assert.equal(report.missing.some(item => item.kind === 'osv'), false); assert.deepEqual(report.advisories, []);
+  }
+});
+
+test('local packages with matching names and versions do not change registry advisory development flags', async () => {
+  const content = lock('1.1.0', {
+    'node_modules/local-alias': { link: true, resolved: 'packages/local' },
+    'packages/local': { name: 'example', version: '1.1.0' },
+  }, { workspaces: ['packages/*'] });
+  const f = await fixture({ headFiles: { ...files('1.1.0'), 'package-lock.json': content }, advisories: () => [advisory('GHSA-registry')],
+    extraPackages: [{ package: { name: 'example', ecosystem: 'npm', version: '1.1.0', purl: 'pkg:npm/example@1.1.0?source=LOCAL' } }],
+  });
+  const report = await f.analyze(false);
+  assert.equal(report.exitCode, 10); assert.equal(report.osv.state, 'completed');
+  assert.deepEqual(report.advisories.map(item => [item.package, item.id, item.dev]), [['example', 'GHSA-registry', true]]);
+});
+
 for (const pkg of [{ name: 'unknown', ecosystem: 'npm' }, { name: 'example', ecosystem: 'npm', version: '1.1.0', purl: 'pkg:npm/example?source=LOCAL' }]) test(`unproven local package ${pkg.name} still makes offline matching incomplete`, async () => {
   const f = await fixture({ extraPackages: [{ package: pkg }] }), report = await f.analyze();
   assert.equal(report.exitCode, 2); assert.equal(report.osv.state, 'partial');

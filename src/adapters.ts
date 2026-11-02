@@ -89,6 +89,7 @@ function osvPackages(raw: unknown, context: AdapterContext, locks: ReadonlyMap<s
       const entries = ecosystem === 'npm' ? matchingNpmPackages(locks.get(file)?.get(name) ?? [], name, version) : [];
       const localSource = typeof pkg.purl === 'string' && /[?&]source=LOCAL(?:&|$)/.test(pkg.purl);
       if (entries.some(entry => entry.local) && (localSource || entries.every(entry => entry.local))) continue;
+      const registryEntries = entries.filter(entry => !entry.local);
       const advisories: OsvAdvisory[] = [];
       for (const vulnerability of array(entry.vulnerabilities ?? [])) {
         const advisory = record(vulnerability);
@@ -106,7 +107,7 @@ function osvPackages(raw: unknown, context: AdapterContext, locks: ReadonlyMap<s
         }
         advisories.push({ id, aliases, severity: typeof level === 'string' && /^[A-Za-z_-]{1,200}$/.test(level) ? level : null, fixedVersions: [...fixed].sort() });
       }
-      packages.push({ lockfile: file, name, ecosystem, version, dev: ecosystem === 'npm' ? entries.length > 0 && entries.every(entry => entry.dev) : null,
+      packages.push({ lockfile: file, name, ecosystem, version, dev: ecosystem === 'npm' ? registryEntries.length > 0 && registryEntries.every(entry => entry.dev) : null,
         matchingIncomplete: version === null || (typeof pkg.purl === 'string' && pkg.purl.includes('source=LOCAL')), advisories });
     }
   }

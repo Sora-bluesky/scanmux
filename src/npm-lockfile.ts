@@ -8,6 +8,13 @@ export interface NpmPackage {
   readonly dev: boolean;
 }
 
+function packageNameFromPath(key: string): string {
+  const segments = key.split('/'), index = segments.lastIndexOf('node_modules');
+  if (index === -1) return path.posix.basename(key);
+  const start = index + 1;
+  return segments.slice(start, start + (segments[start]?.startsWith('@') ? 2 : 1)).join('/');
+}
+
 /** Only committed lockfile declarations can establish that an npm package is local. */
 export function npmLockfilePackages(bytes: Uint8Array): NpmPackage[] {
   try {
@@ -23,7 +30,7 @@ export function npmLockfilePackages(bytes: Uint8Array): NpmPackage[] {
       const linkNames = new Map<string, string>();
       for (const [key, value] of Object.entries(packages)) {
         const entry = record(value);
-        if (entry.link === true && typeof entry.resolved === 'string') linkNames.set(entry.resolved, key.split('node_modules/').at(-1)!);
+        if (entry.link === true && typeof entry.resolved === 'string') linkNames.set(entry.resolved, packageNameFromPath(key));
       }
       for (const [key, value] of Object.entries(packages)) {
         const entry = record(value);
@@ -31,12 +38,13 @@ export function npmLockfilePackages(bytes: Uint8Array): NpmPackage[] {
         const target = entry.link === true && typeof entry.resolved === 'string' ? packages[entry.resolved] : undefined;
         const linked = target === undefined ? {} : record(target);
         const name = typeof entry.name === 'string' ? entry.name : typeof linked.name === 'string' ? linked.name
-          : linkNames.get(key) ?? (key.includes('node_modules/') ? key.split('node_modules/').at(-1)! : path.posix.basename(key));
+          : linkNames.get(key) ?? packageNameFromPath(key);
         // Installed dependencies inside a workspace are still registry packages.
         const matches = (pattern: string) => path.posix.matchesGlob(key, pattern.replace(/^\.\//, '').replace(/\/$/, ''));
         const workspace = !key.split('/').includes('node_modules') && patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
           && !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
-        result.push({ name, version: version(entry) ?? version(linked), local: entry.link === true || workspace, dev: dev(entry) });
+        const localTarget = linkNames.has(key) && !path.win32.isAbsolute(key) && !key.split(/[\\/]/).includes('..');
+        result.push({ name, version: version(entry) ?? version(linked), local: entry.link === true || workspace || localTarget, dev: dev(entry) });
       }
     } else if (lock.lockfileVersion === 1) {
       const walk = (dependencies: unknown) => {

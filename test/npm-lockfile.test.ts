@@ -30,6 +30,44 @@ test('local evidence cannot exempt a versionless registry instance with the same
   assert.deepEqual(matchingNpmPackages(packages, 'shared', '2.0.0').map(pkg => pkg.local), [false]);
 });
 
+test('scoped names use complete node_modules path segments for installed packages and links', () => {
+  const name = '@example-node_modules/shared';
+  for (const lockfileVersion of [2, 3]) {
+    const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion, packages: {
+      '': { workspaces: ['packages/*'] },
+      [`node_modules/${name}`]: { link: true, resolved: 'packages/local' },
+      'packages/local': { version: '1.0.0' }, 'packages/shared': { name: 'shared' },
+      [`node_modules/parent/node_modules/${name}`]: { version: '2.0.0', dev: true },
+    } })));
+    assert.deepEqual(matchingNpmPackages(packages, name, null), [
+      { name, version: '1.0.0', local: true, dev: false },
+      { name, version: '1.0.0', local: true, dev: false },
+      { name, version: '2.0.0', local: false, dev: true },
+    ]);
+    assert.deepEqual(matchingNpmPackages(packages, 'shared', null), [{ name: 'shared', version: null, local: true, dev: false }]);
+  }
+});
+
+test('declared links establish local targets without exempting their registry dependencies or unlinked paths', () => {
+  for (const lockfileVersion of [2, 3]) for (const version of [null, '1.0.0']) {
+    const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion, packages: {
+      '': { dependencies: { local: 'file:packages/local' } },
+      'node_modules/local': { link: true, resolved: 'packages/local' },
+      'packages/local': version === null ? {} : { version },
+      'packages/local/node_modules/registry': { version: '2.0.0' },
+      'packages/unlinked': {},
+      'node_modules/external': { link: true, resolved: '../external' }, '../external': {},
+    } })));
+    assert.deepEqual(matchingNpmPackages(packages, 'local', null), [
+      { name: 'local', version, local: true, dev: false },
+      { name: 'local', version, local: true, dev: false },
+    ]);
+    assert.equal(matchingNpmPackages(packages, 'registry', null)[0]!.local, false);
+    assert.equal(matchingNpmPackages(packages, 'unlinked', null)[0]!.local, false);
+    assert.deepEqual(matchingNpmPackages(packages, 'external', null).map(pkg => pkg.local), [true, false]);
+  }
+});
+
 test('excluded workspace paths are not proof of local packages', () => {
   const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion: 3, packages: {
     '': { workspaces: ['packages/*', '!packages/external'] }, 'packages/local': { name: 'local' }, 'packages/external': { name: 'external' },
