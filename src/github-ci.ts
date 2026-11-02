@@ -11,7 +11,7 @@ import { readZip } from './zip-archive.ts';
 
 export const producerWorkflowPath = '.github/workflows/offline-selfscan.yml';
 export const testsWorkflowPath = '.github/workflows/checks.yml';
-export const approvedPinsSha256 = '5d0130fe81e12d031c445dddd4ee406d6c88302e16f43744267ea43d52bb1ea1';
+export const approvedPinsSha256 = '51b3c548368e177c92bdab60b9672c419278980674c13b590a581aa684609126';
 export const producerWorkflowSha256 = 'd70603fcdd654ebae1e1ab7f5f1f5934dbc9a86c5cc811ad4985d392e6fb7cc5';
 export const producerJob = 'selfscan';
 export const testsJob = 'checks';
