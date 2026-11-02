@@ -430,6 +430,28 @@ v1のホスト保存出力は論理的な容量計上だけです。
 ホストとLinuxの合計予算や、ジョブ全体の資源要件の完了を意味しません。
 同じ利用者による同時変更、macOS、AI・URL・Web・複数リポジトリ・再開ジョブは、このコマンドの対象外です。
 
+## CIでのLinuxジョブの結合検証
+
+すべてのプルリクエストで、`ubuntu-24.04`上の`linux-job-integration`を実行します。
+生成した`SCANMUX_NATIVE_JOB_PROFILE`でnative supervisorのテストを実行し、失敗・スキップ・テスト件数ゼロを不合格にします。
+固定したLinux用DockerとGitleaksを使い、128 MiBのテキストを対象に実際の`job-scan`も実行します。
+LIMITは実測ディスク上限とINCOMPLETE/3、CONTROLはその上限に達しない検査完了、STOPは実行中のGitleaksを観測してからの中断を確認します。
+LIMITとSTOPでは、記録された終了確認項目、独立したコンテナ消失確認、Docker daemonの応答を要求します。
+STOPでは、既知の断続的な問題である`job_closure_unverified`がないことを要求せず、既存の終了確認項目を維持します。
+
+LIMITが検出するのはスナップショットの増加です。
+これらのシナリオは、書込み途中のscannerを強制終了できた証拠ではなく、対象も1種類のLinuxホストです。
+検証用プログラムの出力と判定一覧をartifactへ保存し、認証情報や環境変数の一覧は含めません。
+ソースと非公開の一時ディレクトリはアップロード対象から外しています。
+
+LinuxのDockerホストで`bash scripts/ci-linux-job.sh`を実行できます。
+`SCANMUX_LINUX_JOB_WORK`で実行ごとに新しい実行可能な専用bind mount先を指定し、省略時は`$RUNNER_TEMP/scanmux-linux-job`を使います。
+Docker Desktopでは`/tmp`が`noexec`のため、daemonのLinuxホスト上の`/opt/scanmux-l04`の下で実行ごとに別のディレクトリを使います。
+準備にはネットワーク接続と`.github/scanmux/linux-job-pins.json`の確認済みimage digestが必要です。
+検査コンテナのネットワークは無効です。
+検証用プログラムはUID 1000へ権限を下げ、Docker socketのグループだけを引き継ぎます。
+証拠と実行ディレクトリは確認用に残します。
+
 ## 関連文書
 
 - [導入と最初の検査](getting-started.ja.md)
