@@ -491,8 +491,8 @@ for (const mode of ['success', 'materialization_failure', 'termination_unverifie
   const f = await fixture(), owner = new SourceCleanupOwner(), snapshot = path.join(f.workspace, 'snapshot');
   f.plan.lockfiles = [name];
   const module = await loaded('src/dependencies.ts', { ...safety, sourceCleanupFor, withSourceCleanup, verifySnapshot,
-    createAdapters: () => [{ capabilities: () => ({ engine: 'osv' }), run: async (context: Parameters<Adapter['run']>[0]) => ({ ...emptyRun('osv', context),
-      execution: mode === 'success' ? 'completed' : 'failed', coverage: 'analyzed', errors: mode === 'termination_unverified' ? ['termination_unverified'] : [] }) }],
+    createOsvAdapter: () => ({ run: async (context: Parameters<Adapter['run']>[0]) => ({ ...emptyRun('osv', context),
+      execution: mode === 'success' ? 'completed' : 'failed', coverage: 'analyzed', errors: mode === 'termination_unverified' ? ['termination_unverified'] : [] }) }),
     materialize: async () => {
       const owner = sourceCleanupFor(f.workspace); owner.register(f.workspace, snapshot); await fs.mkdir(snapshot); await owner.capture(f.workspace, snapshot); await fs.writeFile(path.join(snapshot, name), body);
       if (mode === 'materialization_failure') throw new safety.SafeError('snapshot_integrity');

@@ -153,7 +153,7 @@ test('one advisory in two packages and two pathless secrets of one rule stay fou
   assert.deepEqual(again.facts.findings, record.facts.findings);
 }));
 
-test('operator errors exit 4 with no output', { skip: realConfigSkip }, async () => contained(async () => {
+test('operator errors exit 2 for deps and 4 for import with no output', { skip: realConfigSkip }, async () => contained(async () => {
   const sarif = await input(leak());
   const inside = path.join(repo, 'result.sarif');
   await fs.writeFile(inside, JSON.stringify(leak()));
@@ -168,7 +168,7 @@ test('operator errors exit 4 with no output', { skip: realConfigSkip }, async ()
   ];
   for (const [args, code] of cases) {
     const result = await invoke(args);
-    assert.equal(result.exitCode, 4, args.join(' '));
+    assert.equal(result.exitCode, args[0] === 'deps' ? 2 : 4, args.join(' '));
     assert.equal(result.output, '', args.join(' '));
     assert.equal(JSON.parse(result.error).error, code, args.join(' '));
   }

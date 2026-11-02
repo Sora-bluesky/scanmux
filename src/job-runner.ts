@@ -29,7 +29,7 @@ export const jobRuntimeFiles = [
   'src/output.ts', 'src/report-language.ts', 'src/policy.ts', 'src/private-acl.ts', 'src/private-storage.ts', 'src/process.ts', 'src/process-tree.ts', 'src/repository.ts', 'src/safety.ts', 'src/engine-checkpoint.ts',
   'src/web.ts', 'src/web-ui.ts', 'src/web-connection.ts', 'src/observations.ts', 'src/html-report.ts',
   'src/engine-run.ts', 'src/advisory-catalog.ts', 'src/runtime-declarations.ts', 'src/runtime-advisories.ts', 'src/advisory-display.ts', 'src/runtime-policy.ts', 'src/engine-ledger.ts', 'src/provenance.ts', 'src/runtime-admission.ts', 'src/engine-record.ts',
-  'src/sarif-report.ts', 'src/osv-database.ts', 'src/configuration.ts', 'src/dependency-syntax.ts', 'src/dependency-graph.ts', 'src/dependencies.ts', 'src/import.ts',
+  'src/sarif-report.ts', 'src/osv-database.ts', 'src/npm-lockfile.ts', 'src/package-version.ts', 'src/configuration.ts', 'src/dependency-syntax.ts', 'src/dependency-graph.ts', 'src/dependencies.ts', 'src/import.ts',
   'src/comparison.ts', 'src/git-blobs.ts', 'src/release-transparency.ts', 'src/batch.ts', 'src/ci.ts', 'src/github-ci.ts', 'src/zip-archive.ts', 'src/history.ts', 'src/resume.ts', 'src/dispositions.ts', 'src/policy-exceptions.ts',
   'src/intel/feeds.ts', 'src/intel/index.ts', 'src/intel/jvn-rss.ts', 'src/intel/kev.ts', 'src/intel/match.ts', 'src/intel/render.ts', 'src/intel/store.ts', 'src/intel/syntax.ts',
   'src/runner-check.mjs', 'src/runner-check.d.mts', 'src/runner-lifecycle.mjs', 'src/runner-policy.mjs',

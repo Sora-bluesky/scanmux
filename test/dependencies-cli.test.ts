@@ -14,7 +14,7 @@ import { realConfigPath, realConfigSkip } from './real-config.ts';
 const configPath = realConfigPath ?? '';
 let config!: Config, fixtureRoot!: string, repo!: string, hooks!: string;
 function git(args: string[]): string {
-  const result = spawnSync(config.tools.git!.path, ['-c', `core.hooksPath=${hooks}`, '-c', 'core.autocrlf=false', '-c', 'protocol.allow=never', '-C', repo, ...args], {
+  const result = spawnSync(config.tools.git!.path, ['--no-optional-locks', '-c', `core.hooksPath=${hooks}`, '-c', 'core.autocrlf=false', '-c', 'protocol.allow=never', '-C', repo, ...args], {
     encoding: 'utf8', windowsHide: true, env: { SystemRoot: process.env.SystemRoot, HOME: fixtureRoot, USERPROFILE: fixtureRoot, GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: path.join(fixtureRoot, 'empty-gitconfig'), GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
   });
@@ -76,12 +76,43 @@ async function invoke(args: string[]) {
     for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value;
   }
 }
+
+test('deps argument failures use exit 2 when options precede the command', async () => {
+  for (const args of [
+    ['deps', '.', '--unknown-option'],
+    ['--json', 'deps', '.', '--unknown-option'],
+    ['--config', 'unused.json', '--json', 'deps', '.', '--unknown-option'],
+    ['--config=unused.json', 'deps', '.', '--unknown-option'],
+    ['--json', '--', 'deps', '.', 'extra'],
+  ]) {
+    const result = await invoke(args);
+    assert.equal(result.exitCode, 2, args.join(' ')); assert.equal(result.output, '');
+    assert.equal(JSON.parse(result.error).exitCode, 2, args.join(' '));
+  }
+});
+
+test('deps in an option value or later positional does not change other commands failure exits', async () => {
+  for (const args of [
+    ['--json', 'scan', 'deps', '--unknown-option'],
+    ['--config', 'deps', 'scan', '.', '--unknown-option'],
+    ['--config=deps', 'scan', '.', '--unknown-option'],
+    ['--json', 'import', 'deps', '--unknown-option'],
+  ]) {
+    const result = await invoke(args);
+    assert.equal(result.exitCode, 4, args.join(' ')); assert.equal(result.output, '');
+    assert.equal(JSON.parse(result.error).exitCode, 4, args.join(' '));
+  }
+});
+
 test('deps --json on a base/head pair reports the diff, OSV-based upgrades, the closed schema and exit 0', { skip: realConfigSkip }, async () => {
+  const beforeStatus = git(['status', '--porcelain']);
+  const beforeMetadata = (await fs.readdir(path.join(repo, '.git'), { recursive: true })).sort();
   const result = await invoke(['deps', repo, '--config', configPath, '--base', base, '--head', head, '--json']);
   const report = JSON.parse(result.output);
   assert.equal(result.exitCode, 0, JSON.stringify(report.missing));
-  assert.deepEqual(Object.keys(report), ['schema', 'commits', 'planHash', 'inputs', 'osv', 'projects', 'upgrades', 'upgradeCounts', 'diff', 'diffCounts', 'missing', 'notes', 'exitCode']);
-  assert.equal(report.schema, 'scanmux.dependencies/v1');
+  assert.deepEqual(Object.keys(report), ['tool', 'schema', 'commits', 'planHash', 'inputs', 'osv', 'advisories', 'advisoryCounts', 'projects', 'upgrades', 'upgradeCounts', 'diff', 'diffCounts', 'missing', 'notes', 'exitCode']);
+  assert.equal(report.schema, 'scanmux.dependencies/v2');
+  assert.deepEqual(report.tool, { name: 'scanmux', version: JSON.parse(await fs.readFile('package.json', 'utf8')).version });
   assert.deepEqual(report.commits, { head, base });
   assert.ok(report.notes.includes('resolver_settings_outside_repository_not_read'));
   assert.equal(report.osv.state, 'completed');
@@ -95,26 +126,29 @@ test('deps --json on a base/head pair reports the diff, OSV-based upgrades, the 
   for (const item of [...lodash, ...requests]) assert.ok(['allowed', 'undetermined'].includes(item.state), `${item.name} ${item.state} ${item.reason}`);
   assert.ok(lodash.some((item: { state: string; target: string }) => item.state === 'allowed' && item.target === '4.17.21'));
   assert.equal(JSON.stringify(report).includes('registry.npmjs.org'), false);
+  assert.equal(report.osv.sides.base.state, 'completed');
+  assert.equal(git(['status', '--porcelain']), beforeStatus);
+  assert.deepEqual((await fs.readdir(path.join(repo, '.git'), { recursive: true })).sort(), beforeMetadata);
 });
 
 test('deps without a comparison assesses HEAD only, and the text output is a short table', { skip: realConfigSkip }, async () => {
   const json = JSON.parse((await invoke(['deps', repo, '--config', configPath, '--json'])).output);
   assert.equal(json.diff, null); assert.equal(json.diffCounts, null); assert.equal(json.inputs.base, null); assert.deepEqual(json.commits, { head, base: null });
   const text = await invoke(['deps', repo, '--config', configPath]);
-  assert.equal(text.exitCode, 0);
-  assert.match(text.output, /^ScanMux dependencies: analysis completed \(exit 0\); not a security PASS\./);
+  assert.equal(text.exitCode, 10);
+  assert.match(text.output, /^ScanMux dependencies: analysis completed \(exit 10\); not a security PASS\./);
   assert.match(text.output, /package-lock\.json {2}lodash@4\.17\.20 {2}allowed {2}4\.17\.21/);
 });
 
-test('a missing OSV database is listed as missing and exits 3 instead of reporting no findings', { skip: realConfigSkip }, async () => {
+test('a missing OSV database is listed for both sides and exits 2 instead of reporting no findings', { skip: realConfigSkip }, async () => {
   const raw = JSON.parse(await fs.readFile(configPath, 'utf8'));
   const without = path.join(fixtureRoot, 'config-without-osv.json');
   await fs.writeFile(without, JSON.stringify({ ...raw, osvDatabase: null }));
   const result = await invoke(['deps', repo, '--config', without, '--base', base, '--head', head, '--json']);
   const report = JSON.parse(result.output);
-  assert.equal(result.exitCode, 3);
+  assert.equal(result.exitCode, 2);
   assert.equal(report.osv.state, 'failed');
-  assert.deepEqual(report.missing, [{ kind: 'osv', state: 'failed', reason: 'offline_database_not_configured' }]);
+  assert.deepEqual(report.missing, ['head', 'base'].map(side => ({ kind: 'osv', side, state: 'failed', reason: 'offline_database_not_configured' })));
   assert.deepEqual(report.upgrades, []);
   assert.equal(report.diffCounts.versionChanged, 2);
 });
@@ -122,7 +156,7 @@ test('a missing OSV database is listed as missing and exits 3 instead of reporti
 test('deps requires a config and rejects options of other commands', { skip: realConfigSkip }, async () => {
   for (const args of [['deps', repo], ['deps', repo, '--config', configPath, '--base', base], ['deps', repo, '--config', configPath, '--report-language', 'en']]) {
     const result = await invoke(args);
-    assert.equal(result.exitCode, 4, args.join(' '));
+    assert.equal(result.exitCode, 2, args.join(' '));
     assert.equal(result.output, '');
   }
 });

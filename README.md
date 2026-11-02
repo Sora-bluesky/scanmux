@@ -81,7 +81,7 @@ The network column describes command activity, not an OS-level zero-egress guara
 | `plan` | Record coverage, exclusions, transmission and cost for one commit. | No |
 | `scan` | Run the offline checks and save reports. | No |
 | `plan-list`, `scan-list` | Plan or scan an explicit list of repositories sequentially. | For public GitHub acquisition |
-| `deps` | Check dependency upgradeability and lockfile changes offline. | No |
+| `deps` | Compare dependency advisories, upgradeability and lockfile changes offline. Since 0.2.0: exit 0 (no added/present advisory), 10 (added/present), 2 (check failed/incomplete). | No |
 | `ai-plan` | Disclose one repository's AI source scope and finite limits. | No |
 | `ai-scan` | Run isolated AI checks after exact plan-hash acceptance. | OpenAI |
 | `runner-check` | Check ChatGPT authentication type, advertised Daybreak programs, model-free Linux connection and cleanup. No inference or AI enablement. | OpenAI account/model metadata |
