@@ -15,7 +15,7 @@
     }
   },
   "database": {
-    "ecosystems": ["npm", "PyPI"],
+    "ecosystems": ["npm", "PyPI", "Go"],
     "maxBytes": 536870912,
     "timeoutMs": 600000
   },
