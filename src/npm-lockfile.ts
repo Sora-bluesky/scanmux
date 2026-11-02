@@ -9,10 +9,15 @@ export interface NpmPackage {
 }
 
 function packageNameFromPath(key: string): string {
-  const segments = key.split('/'), index = segments.lastIndexOf('node_modules');
-  if (index === -1) return path.posix.basename(key);
-  const start = index + 1;
-  return segments.slice(start, start + (segments[start]?.startsWith('@') ? 2 : 1)).join('/');
+  const segments = key.split('/'), first = segments.indexOf('node_modules');
+  if (first === -1) return path.posix.basename(key);
+  let name = '';
+  for (let index = first; segments[index] === 'node_modules';) {
+    const start = index + 1;
+    index = start + (segments[start]?.startsWith('@') ? 2 : 1);
+    name = segments.slice(start, index).join('/');
+  }
+  return name;
 }
 
 /** Only committed lockfile declarations can establish that an npm package is local. */
@@ -43,7 +48,8 @@ export function npmLockfilePackages(bytes: Uint8Array): NpmPackage[] {
         const matches = (pattern: string) => path.posix.matchesGlob(key, pattern.replace(/^\.\//, '').replace(/\/$/, ''));
         const workspace = !key.split('/').includes('node_modules') && patterns.some(pattern => !pattern.startsWith('!') && matches(pattern))
           && !patterns.some(pattern => pattern.startsWith('!') && matches(pattern.slice(1)));
-        const localTarget = linkNames.has(key) && !path.win32.isAbsolute(key) && !key.split(/[\\/]/).includes('..');
+        const localTarget = linkNames.has(key) && !key.split('/').includes('node_modules')
+          && !path.win32.isAbsolute(key) && !key.split(/[\\/]/).includes('..');
         result.push({ name, version: version(entry) ?? version(linked), local: entry.link === true || workspace || localTarget, dev: dev(entry) });
       }
     } else if (lock.lockfileVersion === 1) {

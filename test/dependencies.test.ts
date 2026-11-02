@@ -255,6 +255,18 @@ test('scoped registry advisories retain their names and development flags alongs
   }
 });
 
+test('registry advisories remain visible when an installed package is a link target', async () => {
+  const content = lock('1.1.0', {
+    'node_modules/example': { name: 'example', version: '1.1.0', dev: true },
+    'node_modules/alias': { link: true, resolved: 'node_modules/example' },
+  }, { dependencies: { example: '^1.0.0', alias: 'file:node_modules/example' } });
+  const f = await fixture({ headFiles: { ...files('1.1.0'), 'package-lock.json': content }, advisories: () => [advisory('GHSA-registry')] });
+  const report = await f.analyze(false);
+  assert.deepEqual(report.advisoryCounts, { added: 0, removed: 0, unchanged: 0, present: 1 });
+  assert.equal(report.exitCode, 10); assert.equal(report.osv.state, 'completed');
+  assert.deepEqual(report.advisories.map(item => [item.package, item.id, item.dev]), [['example', 'GHSA-registry', true]]);
+});
+
 test('declared file links and their targets remain local without workspace declarations on both sides', async () => {
   for (const version of [null, '1.0.0']) {
     const content = lock('1.1.0', {

@@ -68,6 +68,47 @@ test('declared links establish local targets without exempting their registry de
   }
 });
 
+test('links to installed packages preserve registry locality and development flags', () => {
+  for (const lockfileVersion of [2, 3]) for (const target of [
+    'node_modules/example', 'node_modules/parent/node_modules/example', 'packages/local/node_modules/example',
+  ]) {
+    const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion, packages: {
+      '': { workspaces: ['packages/**'] },
+      [target]: { name: 'example', version: '1.1.0', dev: true },
+      'node_modules/alias': { link: true, resolved: target },
+    } })));
+    assert.deepEqual(packages, [
+      { name: 'example', version: '1.1.0', local: false, dev: true },
+      { name: 'example', version: '1.1.0', local: true, dev: false },
+    ]);
+  }
+});
+
+test('scoped packages named node_modules retain their names through nested installations and links', () => {
+  for (const lockfileVersion of [2, 3]) {
+    const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion, packages: {
+      'node_modules/@scope/node_modules': { version: '1.0.0', dev: true },
+      'node_modules/parent/node_modules/@scope/node_modules': { version: '2.0.0', devOptional: true },
+      'node_modules/@scope/node_modules/node_modules/child': { version: '3.0.0' },
+      'node_modules/@scope/node_modules/node_modules/@nested/node_modules': { version: '4.0.0', dev: true },
+      'node_modules/@local/node_modules': { link: true, resolved: 'packages/local' },
+      'packages/local': { version: '5.0.0' },
+      'packages/tools': { version: '6.0.0' },
+      'packages/tools/node_modules/@scope/pkg': { version: '7.0.0' },
+    } })));
+    assert.deepEqual(packages, [
+      { name: '@scope/node_modules', version: '1.0.0', local: false, dev: true },
+      { name: '@scope/node_modules', version: '2.0.0', local: false, dev: true },
+      { name: 'child', version: '3.0.0', local: false, dev: false },
+      { name: '@nested/node_modules', version: '4.0.0', local: false, dev: true },
+      { name: '@local/node_modules', version: '5.0.0', local: true, dev: false },
+      { name: '@local/node_modules', version: '5.0.0', local: true, dev: false },
+      { name: 'tools', version: '6.0.0', local: false, dev: false },
+      { name: '@scope/pkg', version: '7.0.0', local: false, dev: false },
+    ]);
+  }
+});
+
 test('excluded workspace paths are not proof of local packages', () => {
   const packages = npmLockfilePackages(Buffer.from(JSON.stringify({ lockfileVersion: 3, packages: {
     '': { workspaces: ['packages/*', '!packages/external'] }, 'packages/local': { name: 'local' }, 'packages/external': { name: 'external' },
