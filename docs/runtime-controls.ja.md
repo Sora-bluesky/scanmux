@@ -446,7 +446,7 @@ LIMITが検出するのはスナップショットの増加です。
 
 LinuxのDockerホストで`bash scripts/ci-linux-job.sh`を実行できます。
 `SCANMUX_LINUX_JOB_WORK`で実行ごとに新しい実行可能な専用bind mount先を指定し、省略時は`$RUNNER_TEMP/scanmux-linux-job`を使います。
-Docker Desktopでは`/tmp`が`noexec`のため、daemonのLinuxホスト上の`/opt/scanmux-l04`の下で実行ごとに別のディレクトリを使います。
+Docker Desktopでは`/tmp`が`noexec`のため、daemonのLinuxホスト上の`/opt/scanmux-linux-job`の下で実行ごとに別のディレクトリを使います。
 準備にはネットワーク接続と`.github/scanmux/linux-job-pins.json`の確認済みimage digestが必要です。
 検査コンテナのネットワークは無効です。
 検証用プログラムはUID 1000へ権限を下げ、Docker socketのグループだけを引き継ぎます。

@@ -444,7 +444,7 @@ The source and private temporary directories are outside the uploaded evidence.
 
 Run `bash scripts/ci-linux-job.sh` on a Linux Docker host. `SCANMUX_LINUX_JOB_WORK`
 selects a fresh dedicated executable bind-mount path for each invocation, defaulting to
-`$RUNNER_TEMP/scanmux-linux-job`. For Docker Desktop, use `/opt/scanmux-l04` on the
+`$RUNNER_TEMP/scanmux-linux-job`. For Docker Desktop, use `/opt/scanmux-linux-job` on the
 daemon's Linux host (with a separate subdirectory per run) because its `/tmp` is mounted `noexec`. Preparation needs
 network access and the reviewed image digest in `.github/scanmux/linux-job-pins.json`;
 the scan containers have no network. The harness drops to UID 1000 and uses only
