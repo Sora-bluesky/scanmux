@@ -374,7 +374,7 @@ for (const [mode, received, cap, failureCode, terminalKind, closeCode, firstEven
   ['failed', packets(1, { status: 'failed' }), defaults.maxResponseBytes, null, 'failed', 1000],
   ['terminal-error', [diagnosticPackets[0], Buffer.from(JSON.stringify({ type: 'error', sequence_number: 1, code: null, message: 'private-response-canary', param: null }))], defaults.maxResponseBytes, null, 'failed', 1000],
   ['completed', diagnosticPackets, defaults.maxResponseBytes, null, 'completed', 1000],
-]) test(`saved AI transport diagnostics: ${mode}`, async () => {
+]) test(`saved AI transport diagnostics: ${mode}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const saved = await saveTransportExecution(mode, received, cap);
   assert.deepEqual(saved.transportRequests, [{ sequence: 1, receivedBytes: received.reduce((sum, b) => sum + b.length, 0), receivedMessages: received.length,
     terminal: terminalKind !== 'none', terminalKind, closeCode, sendOk: true, failureCode, firstEvent, rejectedEvent, rejectedAt }]);
@@ -385,7 +385,7 @@ for (const [mode, received, cap, failureCode, terminalKind, closeCode, firstEven
 const errorCanary = 'synthetic-error-canary';
 for (const [name, code, expected] of [['policy', 'cyber_policy', 'cyber_policy'], ['quota', 'insufficient_quota', 'insufficient_quota'],
   ['rate limit', 'rate_limit_exceeded', 'rate_limit_exceeded'], ['unknown', errorCanary, 'other'], ['empty', '', 'other'], ['null', null, undefined]])
-for (const shape of ['flat', 'nested', 'response.failed']) test(`${shape} ${name} error keeps only the fixed code in transport and saved records`, async () => {
+for (const shape of ['flat', 'nested', 'response.failed']) test(`${shape} ${name} error keeps only the fixed code in transport and saved records`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const error = { code, message: errorCanary, param: errorCanary, type: errorCanary }, ending = shape === 'response.failed' ? JSON.parse(packets(1, { status: 'failed' })[1]) :
     { type: 'error', sequence_number: 1, ...(shape === 'nested' ? { error } : { code, message: errorCanary, param: errorCanary }) };
   if (shape === 'response.failed') ending.response.error = error;
@@ -404,7 +404,7 @@ for (const shape of ['flat', 'nested', 'response.failed']) test(`${shape} ${name
 
 for (const [name, error] of [['non-object', errorCanary], ['invalid message', { code: errorCanary, message: {}, param: errorCanary, type: errorCanary }],
   ['unknown key', { code: errorCanary, message: errorCanary, param: errorCanary, type: errorCanary, detail: errorCanary }]])
-test(`malformed nested ${name} error keeps the failure code and discards values in transport and saved records`, async () => {
+test(`malformed nested ${name} error keeps the failure code and discards values in transport and saved records`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const received = [packets()[0], Buffer.from(JSON.stringify({ type: 'error', sequence_number: 1, error }))], f = fake(), { promise } = f.begin();
   f.socket.open(); deliver(f.socket, received); await rejected(promise);
   const observed = f.adapter.inspect(); assert.equal(observed.calls[0].terminalKind, 'failed'); assert.equal(observed.calls[0].failureCode, 'error_event');
@@ -414,7 +414,7 @@ test(`malformed nested ${name} error keeps the failure code and discards values 
   assert.equal(saved.transportRequests[0].rejectedAt, 2); assert.ok(!JSON.stringify(saved).includes(errorCanary));
 });
 
-test('saved AI transport diagnostics preserve output identity mismatch detail', async () => {
+test('saved AI transport diagnostics preserve output identity mismatch detail', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const received = packets(1, { output: [message(1), message(2)], fallback: true }), ending = JSON.parse(received.at(-1));
   ending.response.output = [message(1)]; received[received.length - 1] = Buffer.from(JSON.stringify(ending));
   const saved = await saveTransportExecution('output-identity-mismatch', received, defaults.maxResponseBytes);
@@ -424,14 +424,14 @@ test('saved AI transport diagnostics preserve output identity mismatch detail', 
   });
 });
 
-test('saved first WebSocket message shape survives the AI runner report on rejection', async () => {
+test('saved first WebSocket message shape survives the AI runner report on rejection', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const saved = await saveTransportExecution('rate-limits', [rateLimitMessage], defaults.maxResponseBytes);
   assert.equal(saved.transportRequests[0].failureCode, 'sequence_mismatch');
   assert.deepEqual(saved.transportRequests[0].firstEvent, rateLimitFirstEvent);
   assert.deepEqual(saved.transportRequests[0].rejectedEvent, rateLimitRejectedEvent); assert.equal(saved.transportRequests[0].rejectedAt, 1);
 });
 
-test('saved AI transport diagnostics keep separate observations for every request', async () => {
+test('saved AI transport diagnostics keep separate observations for every request', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const streams = [packets(1, { output: [functionItem] }), packets(2, { status: 'incomplete' })];
   const saved = await saveTransportExecution('two-requests', streams, defaults.maxResponseBytes);
   assert.deepEqual(saved.transportRequests, streams.map((received, index) => ({ sequence: index + 1, receivedBytes: received.reduce((sum, b) => sum + b.length, 0),

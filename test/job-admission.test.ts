@@ -114,7 +114,7 @@ async function workspaces() {
 }
 async function clearWorkspaces() { for (const name of await workspaces()) await removeTempDirStrict(path.join(workspaceParent, name), { recursive: true, force: true }); }
 
-test('the default reader refuses v2; the delegated host scan admits it again before any process', async () => {
+test('the default reader refuses v2; the delegated host scan admits it again before any process', { skip: process.platform !== 'win32' && 'npipe Docker endpoint is Windows-only' }, async () => {
   const value = await disk();
   await assert.rejects(loadJobProfile(await writeJson(two(value, policy('active'))), target), { code: 'runtime_policy_entry_unsupported' });
   const directory = await fs.mkdtemp(path.join(fixture, 'delegated-'));

@@ -52,7 +52,7 @@ export function parseCiExpectation(input: unknown): CiExpectation {
   const schema = choice(value.schema, ['scanmux.ci-expectation/v1', 'scanmux.ci-expectation/v2']);
   const jobs = array(value.jobs).map(input => {
     const row = exact(input, ['id', 'targetRoot', ...identityKeys, ...(schema === 'scanmux.ci-expectation/v2' ? ['analysis'] : [])]);
-    if (typeof row.targetRoot !== 'string' || !path.isAbsolute(row.targetRoot)) throw new SafeError('invalid_ci_manifest');
+    if (typeof row.targetRoot !== 'string' || !path.win32.isAbsolute(row.targetRoot) && !path.posix.isAbsolute(row.targetRoot)) throw new SafeError('invalid_ci_manifest');
     const job = { id: jobId(row.id), targetRoot: row.targetRoot, ...identity(row) };
     return schema === 'scanmux.ci-expectation/v2' ? { ...job, analysis: choice(row.analysis, ['offline', 'ai']) } : job;
   });

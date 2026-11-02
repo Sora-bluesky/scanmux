@@ -105,7 +105,7 @@ test('messages, fingerprints, snippets, emails, authors, URLs and absolute paths
   for (const value of pii) assert.equal(text.includes(value), false, value);
   assert.equal(text.includes(JSON.stringify(root).slice(1, -1)), false, 'the canonical root is not output');
   assert.equal(text.includes('lodash'), false, 'a message outside the fixed OSV sentence is not kept');
-  assert.ok(observation(record, 1).reasons.includes('location_outside_repository'));
+  assert.ok(observation(record, record.facts.observations.findIndex(item => item.tool === 'osv-scanner')).reasons.includes('location_outside_repository'));
   assert.deepEqual(record.facts.findings.filter(item => item.tool === 'osv-scanner').map(item => item.path), [null, null]);
 });
 

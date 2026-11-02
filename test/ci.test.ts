@@ -89,6 +89,24 @@ test('CI closed schemas reject unknown fields, types, enums and identifiers', ()
   assert.throws(() => parseCiExpectation({ ...expectation(a.expected), extra: true }));
   assert.throws(() => parseCiExpectation(expectation({ ...a.expected, targetRoot: 'relative/target' })));
 });
+for (const schema of ['scanmux.ci-expectation/v1', 'scanmux.ci-expectation/v2']) {
+  test(schema + ' accepts Windows and POSIX absolute runner paths on every host', () => {
+    const a = fixture();
+    for (const targetRoot of ['D:\\a\\_temp\\scanmux\\target', '\\\\runner\\share\\target', '/home/runner/work/target']) {
+      const expected = { ...expectation({ ...a.expected, targetRoot }), schema };
+      if (schema === 'scanmux.ci-expectation/v2') Object.assign(expected.jobs[0], { analysis: 'offline' });
+      assert.equal(parseCiExpectation(expected).jobs[0].targetRoot, targetRoot);
+    }
+  });
+  test(schema + ' refuses relative target roots on every host', () => {
+    const a = fixture();
+    for (const targetRoot of ['', 'relative/target', 'relative\\target', './target', '../target', 'D:target']) {
+      const expected = { ...expectation({ ...a.expected, targetRoot }), schema };
+      if (schema === 'scanmux.ci-expectation/v2') Object.assign(expected.jobs[0], { analysis: 'offline' });
+      assert.throws(() => parseCiExpectation(expected), { code: 'invalid_ci_manifest' }, targetRoot);
+    }
+  });
+}
 test('CI tags are all-or-none, closed and independent from source strings', () => {
   assert.equal(ciArguments(undefined, undefined), undefined); assert.deepEqual(ciArguments(ciRun, 'first'), { ciRun, jobId: 'first' });
   for (const pair of [[ciRun, undefined], [undefined, 'first'], [ciRun, '<script>'], ['anything', 'first']]) assert.throws(() => ciArguments(pair[0], pair[1]));

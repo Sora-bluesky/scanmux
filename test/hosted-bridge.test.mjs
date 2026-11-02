@@ -346,7 +346,7 @@ for (const [name, packets, cap, terminalKind, closeCode, failureCode, provider, 
   } }, 2],
   ['unknown provider error code', failedPackets('private-provider-canary'), 131072, 'failed', 1000, null, { providerErrorCode: 'other' }],
   ['unknown incomplete reason', incompletePackets('private-provider-canary'), 131072, 'incomplete', 1000, null, {}],
-]) test(`hosted transport diagnostics: ${name}`, async t => {
+]) test(`hosted transport diagnostics: ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, session, terminals } = await savedHostedTransport(t, { stream: () => packets, cap });
   assert.deepEqual(saved.aiExecution.transportRequests, [{ sequence: 1, receivedBytes: packets.reduce((sum, bytes) => sum + bytes.length, 0),
     receivedMessages: packets.length, terminal: terminalKind !== 'none', terminalKind, closeCode, sendOk: true, failureCode, firstEvent: createdFirstEvent, rejectedEvent, rejectedAt, ...provider }]);
@@ -356,7 +356,7 @@ for (const [name, packets, cap, terminalKind, closeCode, failureCode, provider, 
   assert.equal(terminals[0].reason, terminalKind === 'failed' ? 'provider_failed' : terminalKind === 'incomplete' ? 'invalid_response_status' : 'close_unverified');
 });
 
-test('hosted first WebSocket message shape survives into the saved report on rejection', async t => {
+test('hosted first WebSocket message shape survives into the saved report on rejection', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const packets = [Buffer.from(JSON.stringify({ type: 'codex.rate_limits', rate_limits: { detail: 'private-provider-canary', remaining: 8675309 } }))];
   const { saved, session } = await savedHostedTransport(t, { stream: () => packets });
   const row = saved.aiExecution.transportRequests[0]; assert.equal(row.failureCode, 'sequence_mismatch'); assert.equal(row.terminalKind, 'none');
@@ -369,7 +369,7 @@ test('hosted first WebSocket message shape survives into the saved report on rej
   assert.ok(!JSON.stringify(saved).includes('8675309'));
 });
 
-test('hosted rejected WebSocket event shape and index survive into the saved report', async t => {
+test('hosted rejected WebSocket event shape and index survive into the saved report', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const packets = [transportPackets(1)[0], Buffer.from(JSON.stringify({ type: 'response.something_new', sequence_number: 1, text: 'private-provider-canary' }))];
   const { saved, session } = await savedHostedTransport(t, { stream: () => packets });
   const row = saved.aiExecution.transportRequests[0]; assert.equal(row.failureCode, 'unexpected_event'); assert.equal(row.rejectedAt, 2);
@@ -380,7 +380,7 @@ test('hosted rejected WebSocket event shape and index survive into the saved rep
   assert.equal(session.completedResponses, 0); assert.equal(session.toolInvocations, 0); assert.deepEqual(session.observedUsage, []);
 });
 
-test('hosted transport diagnostics: credential failure before transport creation', async t => {
+test('hosted transport diagnostics: credential failure before transport creation', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, session, terminals } = await savedHostedTransport(t, { credentialsFail: true });
   assert.equal(saved.aiExecution.connectionAttempts, 0); assert.equal(saved.aiExecution.sendInvocations, 0); assert.equal(session.submitInvocations, 1);
   assert.equal(terminals[0].closed, true); assert.equal(terminals[0].reason, 'acceptance_unknown');
@@ -388,7 +388,7 @@ test('hosted transport diagnostics: credential failure before transport creation
     closeCode: null, sendOk: false, failureCode: 'ai_credentials_permissions', firstEvent: null, rejectedEvent: null, rejectedAt: null }]);
 });
 
-test('hosted transport diagnostics: standard responses preserve every request and acceptance', async t => {
+test('hosted transport diagnostics: standard responses preserve every request and acceptance', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, session, streams } = await savedHostedTransport(t, { complete: true });
   assert.equal(saved.execution, 'completed'); assert.equal(saved.aiExecution.status, 'completed'); assert.deepEqual(saved.aiExecution.programs, ['standard']);
   assert.equal(session.completedResponses, 4); assert.equal(saved.aiExecution.tokens.kind, 'complete');
@@ -646,20 +646,20 @@ for (const [name, options, expected, requests] of [
     { executorStatus: 'acceptance_unknown', executorMessage: 'mcp_close_unverified', sessionStatus: 'completed', sessionReason: 'conversation_completed', finalDraft: true, writeStarted: true, ignoredAfterFinal: 0, draftRejections: {}, toolInvocations: 3, toolFailureCode: null, workerSite: 'worker_threw', workerErrorCode: 'other' }, 4],
   ['C: the executor throws after the session', { setup: f => { site('result_not_completed')(f); f.behavior.draftResult = (d, r) => { if (d.complete) writeFileSync(path.join(f.repo, 'source.ts'), sdkdiagCanary + '\n'); return r; }; } },
     { executorStatus: 'acceptance_unknown', executorMessage: 'executor_not_completed', sessionStatus: 'completed', sessionReason: 'conversation_completed', finalDraft: true, writeStarted: true, ignoredAfterFinal: 0, draftRejections: {}, toolInvocations: 3, toolFailureCode: null, workerSite: 'result_not_completed', workerErrorCode: null }, 4],
-]) test(`saved SDK outcome distinguishes ${name}`, async t => {
+]) test(`saved SDK outcome distinguishes ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, attempt, session } = await savedHostedTransport(t, { stream: n => canaryPackets(n), ...options });
   const outcome = saved.aiExecution.sdkOutcome; assert.equal(session.submitInvocations, requests);
   assert.deepEqual(expected.responses ? outcome : { ...outcome, responses: undefined }, { responses: undefined, ...expected });
   assert.deepEqual(JSON.parse(attempt).sdkOutcome, outcome);
   assert.ok(!JSON.stringify(saved).includes(sdkdiagCanary)); assert.ok(!attempt.includes(sdkdiagCanary));
 });
-test('saved SDK outcome on success has no worker site', async t => {
+test('saved SDK outcome on success has no worker site', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, attempt } = await savedHostedTransport(t, { complete: true });
   assert.deepEqual(saved.aiExecution.sdkOutcome, { executorStatus: 'completed', executorMessage: null, sessionStatus: 'completed', sessionReason: 'conversation_completed', finalDraft: true, writeStarted: true, ignoredAfterFinal: 0, draftRejections: {}, toolInvocations: 3, toolFailureCode: null,
     responses: [...firstTwo, { sequence: 3, toolCalls: 1, tools: ['record_codex_security_scan_draft'] }, { sequence: 4, toolCalls: 0, tools: [] }], workerSite: null, workerErrorCode: null });
   assert.deepEqual(JSON.parse(attempt).sdkOutcome, saved.aiExecution.sdkOutcome);
 });
-test('saved SDK outcome separates the two worker failure sites', async t => {
+test('saved SDK outcome separates the two worker failure sites', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const first = await savedHostedTransport(t, { setup: site('result_not_completed') }), second = await savedHostedTransport(t, { setup: site('worker_threw', 'worker_artifact_path') });
   assert.deepEqual([first, second].map(({ saved }) => [saved.aiExecution.sdkOutcome.workerSite, saved.aiExecution.sdkOutcome.workerErrorCode]), [['result_not_completed', null], ['worker_threw', 'worker_artifact_path']]);
   assert.deepEqual({ ...first.saved.aiExecution.sdkOutcome, workerSite: null, workerErrorCode: null }, { ...second.saved.aiExecution.sdkOutcome, workerSite: null, workerErrorCode: null });
@@ -675,7 +675,7 @@ async function workerFailureFrame(error, payload) {
   await runInNewContext(source.slice(start, end) + "\nterminalFailure('sdk_finalization', { error, site: 'worker_threw' });", context);
   assert.equal(context.process.exitCode, 1); return frame;
 }
-for (const [name, code, expected] of [['absent', undefined, 'other'], ['nonstring', 5, 'other'], ['invalid', 'worker-error', 'other'], ['oversize', 'a'.repeat(65), 'other'], ['valid', 'worker_artifact_path', 'worker_artifact_path']]) test(`worker error ${name} code never falls back to its message`, async t => {
+for (const [name, code, expected] of [['absent', undefined, 'other'], ['nonstring', 5, 'other'], ['invalid', 'worker-error', 'other'], ['oversize', 'a'.repeat(65), 'other'], ['valid', 'worker_artifact_path', 'worker_artifact_path']]) test(`worker error ${name} code never falls back to its message`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const canary = 'synthetic_sdkdiag_canary', error = Error(canary); if (code !== undefined) error.code = code;
   let frame;
   const { saved, attempt } = await savedHostedTransport(t, { setup: f => { f.behavior.failure = async payload => { frame = await workerFailureFrame(error, payload); Object.assign(payload, frame); }; } });
@@ -687,7 +687,7 @@ const unknownTool = 'synthetic_sdkdiag_tool_canary';
 for (const [name, change, reason, responses] of [
   ['unknown tool', response => response.output.find(item => item.type === 'function_call').name = unknownTool, 'invalid_tool', [{ sequence: 1, toolCalls: 1, tools: ['other'] }]],
   ['unknown usage', response => response.usage = null, 'usage_unknown', []],
-]) test(`saved SDK outcome counts projected responses on ${name}`, async t => {
+]) test(`saved SDK outcome counts projected responses on ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const stream = n => transportPackets(n).map(bytes => { const event = JSON.parse(bytes); if (event.type === 'response.completed') change(event.response); return Buffer.from(JSON.stringify(event)); });
   const { saved, attempt, session } = await savedHostedTransport(t, { stream });
   assert.equal(session.status, 'acceptance_unknown'); assert.equal(session.reason, reason); assert.equal(session.toolInvocations, 0); assert.equal(session.submitInvocations, 1);
@@ -722,7 +722,7 @@ for (const [code, options, expected = code] of [
   ['mcp_unsettled', { toolError: { code: 'mcp_unsettled', message: sdkdiagCanary } }],
   ['synthetic_mcp_failure', { toolError: { code: 'synthetic_mcp_failure', message: sdkdiagCanary } }, 'other'],
   ['unknown message', { toolError: { message: sdkdiagCanary } }, 'other'],
-]) test(`saved SDK outcome identifies tool failure ${code} without error text`, async t => {
+]) test(`saved SDK outcome identifies tool failure ${code} without error text`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, attempt, session } = await savedHostedTransport(t, options);
   assert.equal(saved.aiExecution.sdkOutcome.toolFailureCode, expected); assert.equal(JSON.parse(attempt).sdkOutcome.toolFailureCode, expected); assert.equal(session.toolFailureCode, expected);
   assert.equal(saved.aiExecution.sdkOutcome.sessionReason, 'tool_acceptance_unknown');
@@ -731,7 +731,7 @@ for (const [code, options, expected = code] of [
 for (const [name, change] of [
   ['missing', {}], ['nonstring', { toolFailureCode: 5 }], ['array', { toolFailureCode: ['draft_source'] }], ['object', { toolFailureCode: { code: 'draft_source' } }],
   ['unknown code', { toolFailureCode: 'synthetic_mcp_failure' }], ['free text', { toolFailureCode: sdkdiagCanary }],
-]) test(`bridge refuses SDK outcome tool failure code with ${name}`, async t => {
+]) test(`bridge refuses SDK outcome tool failure code with ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, attempt } = await savedHostedTransport(t, { complete: true, outcomeChange: change });
   assert.equal(saved.aiExecution.sdkOutcome, undefined); assert.equal(JSON.parse(attempt).sdkOutcome, undefined);
   assert.equal(JSON.parse(attempt).reason, 'bridge_sdk_outcome'); assert.equal(JSON.parse(attempt).artifactsAccepted, false); assert.ok(!JSON.stringify(saved).includes(sdkdiagCanary)); assert.ok(!attempt.includes(sdkdiagCanary));
@@ -739,7 +739,7 @@ for (const [name, change] of [
 for (const [name, batches, expected] of [
   ['one in the same response', [1], 1], ['one in the next response', [0, 1], 1],
   ['several in one response', [3], 3], ['several across responses', [1, 2], 3],
-]) test(`saved SDK outcome counts ignored post-final drafts: ${name}`, async t => {
+]) test(`saved SDK outcome counts ignored post-final drafts: ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   let calls;
   const stream = changePackets((response, n) => {
     const count = batches[n - 3] ?? 0;
@@ -753,13 +753,13 @@ for (const [name, batches, expected] of [
 for (const [name, change] of [
   ['missing', {}], ['negative', { ignoredAfterFinal: -1 }], ['non-integer', { ignoredAfterFinal: 1.5 }], ['string', { ignoredAfterFinal: '1' }],
   ['unsafe integer', { ignoredAfterFinal: Number.MAX_SAFE_INTEGER + 1 }], ['null', { ignoredAfterFinal: null }], ['boolean', { ignoredAfterFinal: true }],
-]) test(`bridge refuses SDK outcome ignoredAfterFinal with ${name}`, async t => {
+]) test(`bridge refuses SDK outcome ignoredAfterFinal with ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, attempt } = await savedHostedTransport(t, { complete: true, outcomeChange: change, outcomeOmit: 'ignoredAfterFinal' }), result = JSON.parse(attempt);
   assert.equal(saved.aiExecution.sdkOutcome, undefined); assert.equal(result.sdkOutcome, undefined); assert.equal(result.reason, 'bridge_sdk_outcome'); assert.equal(result.artifactsAccepted, false);
 });
 
 const rejectionCanary = 'synthetic-draft-rejection-source-canary';
-for (const codes of [['draft_owned_field'], ['draft_owned_field', 'draft_owned_field'], ['draft_owned_field', 'draft_code'], ['draft_owned_field', 'draft_code', 'draft_code']]) test(`saved SDK outcome counts draft rejections ${codes.join(',')}`, async t => {
+for (const codes of [['draft_owned_field'], ['draft_owned_field', 'draft_owned_field'], ['draft_owned_field', 'draft_code'], ['draft_owned_field', 'draft_code', 'draft_code']]) test(`saved SDK outcome counts draft rejections ${codes.join(',')}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const sent = []; let calls;
   t.mock.method(HostedSocket.prototype, 'send', (bytes, options, callback) => { sent.push(JSON.parse(bytes)); callback(); });
   const stream = changePackets((response, n) => {
@@ -792,13 +792,13 @@ for (const [name, value] of [
   ['missing', undefined], ['null', null], ['array', []], ['scalar', 1], ['negative', { draft_code: -1 }], ['fraction', { draft_code: 0.5 }],
   ['unsafe integer', { draft_code: Number.MAX_SAFE_INTEGER + 1 }], ['string count', { draft_code: '1' }], ['null count', { draft_code: null }], ['boolean count', { draft_code: true }],
   ['unknown code', { [rejectionCanary]: 1 }], ['fallback code', { other: 1 }], ['prototype key', JSON.parse('{"__proto__":1}')],
-]) test(`bridge refuses SDK draft rejection counts with ${name}`, async t => {
+]) test(`bridge refuses SDK draft rejection counts with ${name}`, { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const { saved, attempt } = await savedHostedTransport(t, { complete: true, outcomeChange: value === undefined ? {} : { draftRejections: value }, outcomeOmit: 'draftRejections' }), result = JSON.parse(attempt);
   assert.equal(saved.aiExecution.sdkOutcome, undefined); assert.equal(result.sdkOutcome, undefined); assert.equal(result.reason, 'bridge_sdk_outcome'); assert.equal(result.artifactsAccepted, false);
   assert.ok(!attempt.includes(rejectionCanary)); assert.ok(!JSON.stringify(saved).includes(rejectionCanary));
 });
 
-test('bridge permits only fixed tool failure keys with non-negative integer rejection counts', async t => {
+test('bridge permits only fixed tool failure keys with non-negative integer rejection counts', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async t => {
   const draftRejections = Object.fromEntries(toolFailureCodes.map(code => [code, code === 'draft_code' ? Number.MAX_SAFE_INTEGER : 0]));
   const { saved, attempt } = await savedHostedTransport(t, { complete: true, outcomeChange: { toolFailureCode: null, draftRejections }, outcomeValid: true });
   assert.deepEqual(saved.aiExecution.sdkOutcome.draftRejections, draftRejections); assert.deepEqual(JSON.parse(attempt).sdkOutcome.draftRejections, draftRejections);
