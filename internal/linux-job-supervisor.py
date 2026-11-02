@@ -627,13 +627,19 @@ class Tracer:
             entry = task['entry']
             require(entry is not None and entry['phase'] in ['held', 'async'])
             result = syscall_info(tid)
-            require(result['op'] == 2 and not -516 <= result['rval'] <= -512)
+            require(result['op'] == 2 and result['rval'] not in [-515, -516])
             task['lastStop'] = 'syscall_exit'
-            self.counts['writes'] += 1
-            self.progress['phase'] = 'syscall_exit_observed'
             if entry['phase'] == 'held':
                 found, identity = os.fstat(entry['held']), entry['identity']
                 require((found.st_dev, found.st_ino, self.mount_id(entry['held'])) == (identity['device'], identity['inode'], identity['mountId']))
+            if result['rval'] in [-512, -513, -514]:
+                # ptrace(2): INTERRUPT may report a restarting syscall exit.
+                # No bytes were written; signal delivery and a fresh seccomp
+                # entry must see no old FD identity or pending exit.
+                self.release_entry(task)
+                return
+            self.counts['writes'] += 1
+            self.progress['phase'] = 'syscall_exit_observed'
             if result['isError'] and result['rval'] == -errno.ENOSPC:
                 # An asynchronously reclassified FD cannot prove disk identity.
                 require(entry['phase'] == 'held')

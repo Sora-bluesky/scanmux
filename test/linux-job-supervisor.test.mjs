@@ -110,17 +110,25 @@ scenarios['fd-reuse'] = pythonScenario('fd-reuse', [
   ' if result==1: success+=1', ' else:', '  assert result==-1 and ctypes.get_errno()==errno.EBADF', '  missing+=1',
   'thread.join()', 'assert len(changes)==192 and success+missing==256', "os.write(1,json.dumps({'success':success,'missing':missing,'fdTransitions':len(changes)}).encode())",
 ].join('\n'));
-const observerErrorScenarios = new Set(['nonquota-enospc', 'payload-sigtrap', 'payload-group-stop', 'restart-write']);
+const observerErrorScenarios = new Set(['nonquota-enospc', 'payload-sigtrap', 'payload-group-stop']);
 scenarios['nonquota-enospc'] = pythonScenario('nonquota-enospc', [
   'import os', "fd=os.open('/dev/full',os.O_WRONLY)", 'try:', " os.write(fd,b'X')", 'except OSError: pass', "os.write(1,b'WRITER_CONTINUED_AFTER_UNCORRELATED_ENOSPC')",
 ].join('\n'),true);
 for(const[name,sig]of[['payload-sigtrap','SIGTRAP'],['payload-group-stop','SIGSTOP']])scenarios[name]=pythonScenario(name,
   `import os,signal\nos.kill(os.getpid(),signal.${sig})\nos.write(1,b'UNSUPPORTED_STOP_CONTINUED')`,true);
-scenarios['restart-write'] = pythonScenario('restart-write', [
-  'import os,fcntl,threading,time', 'r,w=os.pipe()', 'size=fcntl.fcntl(w,fcntl.F_GETPIPE_SZ)', "assert os.write(w,b'X'*size)==size", 'ready=threading.Event()', 'def trigger():',
-  ' ready.wait()', ' time.sleep(0.02)', " fd=os.open('/work/trigger',os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)", " os.write(fd,b'X')", ' os.close(fd)',
-  'thread=threading.Thread(target=trigger)', 'thread.start()', 'ready.set()', "os.write(w,b'Y')", "os.write(1,b'UNSUPPORTED_RESTART_CONTINUED')",
-].join('\n'),true);
+for (const name of ['restart-write', 'signal-restart-write']) scenarios[name] = pythonScenario(name, [
+  'import os,fcntl,threading,time,signal,json', 'r,w=os.pipe()', 'size=fcntl.fcntl(w,fcntl.F_GETPIPE_SZ)',
+  "assert os.write(w,b'X'*size)==size", 'ready=threading.Event()', 'received=bytearray()', 'signals=[]',
+  'signal.signal(signal.SIGUSR1,lambda sig,frame:signals.append(sig))', 'signal.siginterrupt(signal.SIGUSR1,False)',
+  'def trigger():', ' ready.wait()', ' time.sleep(0.02)',
+  ...(name === 'signal-restart-write' ? [' os.kill(os.getpid(),signal.SIGUSR1)'] : []),
+  // The measured-store write interrupts the blocked pipe writer at the all-stop barrier.
+  " fd=os.open('/work/trigger',os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)", " assert os.write(fd,b'X')==1", ' os.close(fd)',
+  ' while True:', '  data=os.read(r,4096)', '  if not data: break', '  received.extend(data)', ' os.close(r)',
+  'thread=threading.Thread(target=trigger)', 'thread.start()', 'ready.set()', "assert os.write(w,b'Y')==1", 'os.close(w)', 'thread.join()',
+  "assert received==b'X'*size+b'Y'", `assert len(signals)==${name === 'signal-restart-write' ? 1 : 0}`,
+  "os.write(1,json.dumps({'bytes':len(received),'expectedBytes':size+1,'signals':len(signals)}).encode())",
+].join('\n'));
 
 export async function runNativeSupervisorFixture(profilePath, scenario) {
   assert.ok(Object.hasOwn(scenarios, scenario));
@@ -212,7 +220,7 @@ export async function runNativeSupervisorFixture(profilePath, scenario) {
       assert.equal(closed.controllerCompleted,false);assert.equal(closed.stopReason,null);assert.equal(proof.packets.some(packet=>packet.type==='stop'),false);
       assert.equal(body.length,0,'unsupported observation must not resume the writer to its marker');assert.equal(closed.rootTerminal.signal,9);
       const last=closed.interruption.lastEvent;assert.equal(last.event,0);
-      if(scenario==='nonquota-enospc'||scenario==='restart-write'){assert.equal(last.signal,133);assert.equal(last.entryPhase,'async');}
+      if(scenario==='nonquota-enospc'){assert.equal(last.signal,133);assert.equal(last.entryPhase,'async');}
       else assert.equal(last.signal,scenario==='payload-sigtrap'?5:19);
       proof.result={failure:failure.detail,lastEvent:last};
     } else if (scenario.startsWith('disk-')) {
@@ -232,6 +240,12 @@ export async function runNativeSupervisorFixture(profilePath, scenario) {
       if (scenario === 'nonleader-exec') assert.ok(closed.counts.execMigrations > 0);
       if (scenario === 'concurrent-writers') assert.ok(closed.counts.fork > 0 && closed.counts.clone > 0);
       if (scenario === 'vfork-exec') assert.ok(closed.counts.vfork > 0 && closed.counts.exec >= 3);
+      if (scenario === 'restart-write' || scenario === 'signal-restart-write') {
+        assert.equal(proof.result.bytes, proof.result.expectedBytes); assert.ok(closed.counts.interrupt > 0);
+        assert.ok(closed.counts.seccomp > closed.counts.writes, 'a restart must re-enter seccomp without counting a completed write');
+        assert.equal(proof.result.signals, scenario === 'signal-restart-write' ? 1 : 0);
+        if (scenario === 'signal-restart-write') assert.ok(closed.counts.signal > 0);
+      }
     }
     proof.state = 'passed';
   } finally {
@@ -255,7 +269,7 @@ test('native supervisor: real pinned Go process completion and group exit throug
 test('native supervisor: internal blocking pipe keeps its tracee consumer runnable', { skip: profileInput ? false : 'requires explicit local native-fixture profile; not counted as PASS' }, async () => {
   await runNativeSupervisorFixture(profileInput, 'internal-pipe');
 });
-for (const name of ['controller-disappearance', 'disk-work', 'disk-tmp', 'disk-shm-high-fd', 'partial-write', 'nonquota-negative', 'population-filter', 'nonleader-exec', 'concurrent-writers', 'vfork-exec', 'fd-reuse', ...observerErrorScenarios]) {
+for (const name of ['controller-disappearance', 'disk-work', 'disk-tmp', 'disk-shm-high-fd', 'partial-write', 'nonquota-negative', 'population-filter', 'nonleader-exec', 'concurrent-writers', 'vfork-exec', 'fd-reuse', 'restart-write', 'signal-restart-write', ...observerErrorScenarios]) {
   test('native supervisor: ' + name, { skip: profileInput ? false : 'requires explicit local native-fixture profile; not counted as PASS' }, async () => {
     await runNativeSupervisorFixture(profileInput, name);
   });
