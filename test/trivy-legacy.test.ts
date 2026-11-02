@@ -120,7 +120,10 @@ async function observations(root: string) {
         run.tool.driver.version = '0.1.0-poc.1';
       }
       const text = JSON.stringify(parsed, null, 2) + '\n';
-      return { name: part.name, findings: part.findings, text: bytes(text), gzip: bytes(gzipSync(text)) };
+      const gzip = gzipSync(text);
+      // Preserve the immutable Windows capture's NTFS OS byte on other hosts.
+      if (process.platform !== 'win32') gzip[9] = 10;
+      return { name: part.name, findings: part.findings, text: bytes(text), gzip: bytes(gzip) };
     }) };
 }
 

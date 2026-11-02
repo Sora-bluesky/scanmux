@@ -134,6 +134,24 @@ test('workflows: step names match the verifier tables, actions are SHA pinned an
   assert.match(await readFile(testsWorkflowPath, 'utf8'), /permissions:\n {2}contents: read\n\n/);
 });
 
+test('pull requests run the suite on Linux with the same pinned actions and Node as Windows', async () => {
+  const text = await readFile(testsWorkflowPath, 'utf8');
+  const [windows, linux] = text.split('\n  checks-linux:\n');
+  assert.ok(linux); assert.match(windows, /^on:\n {2}pull_request:\n/m);
+  assert.match(linux, /^ {4}runs-on: ubuntu-24\.04$/m);
+  assert.match(linux, /^ {4}timeout-minutes: 25$/m);
+  for (const action of ['checkout', 'setup-node']) {
+    const pattern = new RegExp('uses: (actions/' + action + '@[0-9a-f]{40})');
+    assert.equal(linux.match(pattern)?.[1], windows.match(pattern)?.[1]);
+  }
+  for (const options of ['persist-credentials: false\n          fetch-depth: 0', 'node-version: 24.22.1\n          package-manager-cache: false']) {
+    assert.ok(linux.includes(options)); assert.ok(windows.includes(options));
+  }
+  assert.deepEqual([...linux.matchAll(/^ {8}run: (.+)$/gm)].map(match => match[1]),
+    ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', 'npm test']);
+  assert.doesNotMatch(linux, /permissions:|ci-produce|SCANMUX_REAL_CONFIG/);
+});
+
 test('release workflow dry run attests the dispatched commit without tags or release access', async () => {
   const text = await readFile('.github/workflows/release.yml', 'utf8');
   const dryRun = text.slice(text.indexOf('\n  dry-run:\n'), text.indexOf('\n  release:\n'));
@@ -425,7 +443,7 @@ test('ci-github CLI: requires its flags, a config and a runtime policy v2 gh pin
   }
 });
 
-test('round trip: the producer seal, anchor and gate commands feed the verifier', async () => {
+test('round trip: the producer seal, anchor and gate commands feed the verifier', { skip: process.platform !== 'win32' && 'CI producer requires Windows runner tools' }, async () => {
   const head = await new Promise<string>((resolve, reject) => {
     const child = spawn('git', ['rev-parse', 'HEAD'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     const out: Buffer[] = [];

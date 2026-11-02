@@ -61,7 +61,7 @@ test('the ordinary adapter remains blocked even with AI configuration and an AI 
   const run = await adapter.run({ plan, config, workspace: process.cwd(), snapshot: '', signal: new AbortController().signal, secretsCleared: true });
   assert.equal(run.execution, 'not_started'); assert.equal(run.usage.calls, 0); assert.equal(run.aiExecution, undefined); assert.ok(run.errors.includes('isolation_unverified'));
 });
-test('a wrong acceptance and a missing completed secret scan stop the AI adapter before runtime factories', async () => {
+test('a wrong acceptance and a missing completed secret scan stop the AI adapter before runtime factories', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const config = { ...structuredClone(defaults), ai: aiConfig(path.resolve('.local'), path.resolve('test')) }, plan = buildAiPlan(source(config), config);
   let effects = 0; const runtime = { openWorker() { effects++; throw Error('unexpected'); }, createSocket() { effects++; throw Error('unexpected'); } };
   for (const acceptedPlanHash of ['0'.repeat(64), plan.planHash]) {
@@ -70,6 +70,16 @@ test('a wrong acceptance and a missing completed secret scan stop the AI adapter
   }
   assert.equal(effects, 0);
 });
+test('the AI adapter refuses non-Windows hosts before runtime factories', { skip: process.platform === 'win32' && 'requires a non-Windows host' }, async () => {
+  const config = { ...structuredClone(defaults), ai: aiConfig(path.resolve('.local'), path.resolve('test')) }, plan = buildAiPlan(source(config), config);
+  let effects = 0;
+  const runtime = { openWorker() { effects++; throw Error('unexpected_worker'); }, createSocket() { effects++; throw Error('unexpected_socket'); } };
+  const run = await createAiAdapter({ acceptedPlanHash: plan.planHash, expiresAt: performance.now() + 10000, runtime }).run({ plan, config, workspace: process.cwd(), snapshot: '', signal: new AbortController().signal });
+  assert.equal(run.execution, 'failed'); assert.deepEqual(run.errors, ['ai_host_unsupported', 'ai_synthetic_evidence']);
+  assert.equal(run.aiExecution.reason, 'ai_host_unsupported'); assert.equal(run.usage.calls, 0);
+  assert.equal(run.aiExecution.connectionAttempts, 0); assert.equal(run.aiExecution.submitInvocations, 0); assert.equal(effects, 0);
+});
+
 test('a verified resource stop before the first submit retains its final adapter state and reason', { skip: process.platform !== 'win32' }, async t => {
   const root = await fs.mkdtemp(path.join(process.cwd(), '.ai-adapter-test-'));
   test.after(() => removeTempDirStrict(root, { recursive: true, force: true }));

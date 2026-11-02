@@ -42,7 +42,7 @@ function parse(remaining, maximum, packets = 0, forward = false) {
     limits: { ...Object.fromEntries(['cpuCount','memoryBytes','tmpBytes','workBytes','shmBytes','pids','wallMs','cleanupTimeoutMs','retainedBytes'].map(k => [k, 1])), wallMs: 20000, cleanupTimeoutMs: 10000 } };
   if (remaining !== undefined) input.copyBudgetBytes = remaining;
   if (maximum !== undefined) input.maxJobDiskBytes = maximum;
-  return spawnSync('python', ['-B', '-c', parser, JSON.stringify(input), String(packets), forward ? 'forward' : 'init'], { encoding: 'utf8', windowsHide: true });
+  return spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-B', '-c', parser, JSON.stringify(input), String(packets), forward ? 'forward' : 'init'], { encoding: 'utf8', windowsHide: true });
 }
 test('copy budget bootstrap: accepts zero and safe remaining bytes without changing absent-key packets', () => {
   for (const remaining of [undefined, 0, 1, Number.MAX_SAFE_INTEGER]) {

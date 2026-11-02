@@ -516,7 +516,7 @@ for (const mode of ['success', 'termination_unverified']) test(`output validatio
   assert.deepEqual((await fs.readdir(f.workspace)).filter(file => file.startsWith('output-check-')), []);
 });
 
-for (const mode of ['success', 'termination_unverified']) test(`Trivy probe ${mode} removes its private work tree`, async () => {
+for (const mode of ['success', 'termination_unverified']) test(`Trivy probe ${mode} removes its private work tree`, { skip: process.platform !== 'win32' && 'Trivy AppContainer is Windows-only' }, async () => {
   const f = await fixture();
   f.config.tools.trivy = { path: path.join(f.root, name), sha256: safety.hash(body), version: '0.76.1' };
   const module = await loaded('src/trivy-adapter.ts', { ...safety, ...copyBudget, ...jobDisk, path, mkdir: fs.mkdir, writeFile: fs.writeFile, sourceCleanupFor, emptyRun,
@@ -527,6 +527,16 @@ for (const mode of ['success', 'termination_unverified']) test(`Trivy probe ${mo
   assert.equal(run.execution, mode === 'success' ? 'completed' : 'failed');
   if (mode !== 'success') assert.ok(run.errors.includes(mode));
   assert.deepEqual((await fs.readdir(f.workspace)).filter(file => file.startsWith('trivy-')), []);
+});
+
+test('Trivy probe refuses non-Windows hosts before creating its private work tree', { skip: process.platform === 'win32' && 'requires a non-Windows host' }, async () => {
+  const f = await fixture();
+  f.config.tools.trivy = { path: path.join(f.root, name), sha256: safety.hash(body), version: '0.76.1' };
+  const { probeTrivy } = await import('../src/trivy-adapter.ts');
+  const run = await probeTrivy({ ...f, snapshot: f.root, signal: f.abort.signal, secretsCleared: false });
+  assert.equal(run.execution, 'not_started'); assert.deepEqual(run.errors, ['process_appcontainer_unsupported_platform']);
+  assert.deepEqual((await fs.readdir(f.workspace)).filter(file => file.startsWith('trivy-')), []);
+  assert.equal(await fs.readFile(path.join(f.workspace, 'report.json'), 'utf8'), 'retained report');
 });
 
 for (const mode of ['success', 'termination_unverified']) test(`publisher admission ${mode} removes all copied artifacts`, async () => {

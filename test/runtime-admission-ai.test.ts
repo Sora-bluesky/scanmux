@@ -108,7 +108,7 @@ test('AI entries refuse stopped, AI digest and unidentified docker, git and node
   }
 });
 
-test('AI entries with a non-matching policy, or without AI configuration, reach the same point as Config1', async () => {
+test('AI entries with a non-matching policy, or without AI configuration, reach the same point as Config1', { skip: process.platform !== 'win32' && 'AI host is Windows-only' }, async () => {
   const unmatched = policy('active', [{ kind: 'digest', component: 'linux-image', sha256: '1'.repeat(64) }, { kind: 'component', component: 'windows-owner' }, { kind: 'component', component: 'codex-cli' }]);
   const cases = [{ fields: { tools, ai }, raw: unmatched }, { fields: { tools }, raw: policy('active', [{ kind: 'digest', component: 'docker', sha256: 'f'.repeat(64) }]) }];
   for (const { fields, raw } of cases) for (const args of aiEntries) {
@@ -128,7 +128,7 @@ const runnerRefusals: [unknown, string][] = [
   [policy('active', [{ kind: 'digest', component: 'linux-image', sha256: '7'.repeat(64) }]), 'runtime_policy_denied_linux_image_digest'],
   [policy('active', [{ kind: 'component', component: 'gitleaks' }]), 'runtime_policy_denied_gitleaks_component'],
 ];
-test('runner-check refuses before hashing runner tools, reading the auth home or starting a process', async () => {
+test('runner-check refuses before hashing runner tools, reading the auth home or starting a process', { skip: process.platform !== 'win32' && 'runner-check host is Windows-only' }, async () => {
   const runnerFiles = [runner.codex.path, runner.linuxCodex.path, runner.docker.path];
   for (const [raw, code] of runnerRefusals) {
     const result = await invoke(['runner-check', '--config', await configFile({ schema: 2, runtimePolicy: raw, tools: { gitleaks: tools.gitleaks }, runner })]);
@@ -144,6 +144,15 @@ test('runner-check refuses before hashing runner tools, reading the auth home or
   assert.deepEqual(inside(actual.opened, runnerFiles), runnerFiles, 'positive control hashed the runner tools');
   const state = (text: string) => { const { runId: _run, createdAt: _created, ...rest } = JSON.parse(text); return rest; };
   assert.deepEqual({ ...comparable(actual), state: state(actual.output) }, { ...comparable(expected), state: state(expected.output) });
+});
+
+test('runner-check refuses non-Windows hosts before reading runner inputs or starting a process', { skip: process.platform === 'win32' && 'requires a non-Windows host' }, async () => {
+  const result = await invoke(['runner-check', '--config', await configFile({ schema: 1, runner })]);
+  assert.equal(result.exitCode, 3); assert.equal(result.error, '');
+  const state = JSON.parse(result.output);
+  assert.equal(state.state, 'INCOMPLETE'); assert.ok(state.blockers.includes('runner_host_unsupported'));
+  assert.deepEqual(result.launches, []);
+  assert.deepEqual(inside(result.opened, [authHome, runner.codex.path, runner.linuxCodex.path, runner.docker.path]), []);
 });
 
 const readers = [['history', report], ['ci-check', report], ['recover', report], ['dispositions', report], ['policy-check', report, '--decisions', report],
