@@ -88,7 +88,7 @@ export function groupFindings(findings: Finding[]): FindingGroup[] {
   for (const group of groups.values()) {
     group.knownSeverity = severityOrder.find(severity => group.items.some(({ value }) => value.severity === severity)) ?? null;
     group.unknownCount = group.items.filter(({ value }) => !severityOrder.includes(value.severity)).length;
-    group.places = new Set(group.items.map(({ value }) => JSON.stringify(value.engine === 'trivy' ? [value.file, value.line, value.endLine] : [value.file, value.line]))).size;
+    group.places = new Set(group.items.map(({ value }) => JSON.stringify(value.engine === 'trivy' || value.engine === 'codex-security' ? [value.file, value.line, value.endLine] : [value.file, value.line]))).size;
   }
   const rank = (value: FindingGroup) => value.knownSeverity ? severityOrder.indexOf(value.knownSeverity) : severityOrder.length;
   return [...groups.values()].sort((a, b) => rank(a) - rank(b) || a.items[0].index - b.items[0].index);
@@ -121,7 +121,7 @@ function packageName(value: Finding): string {
 function individual(value: Finding, index: number, mode: 'screen' | 'print'): string {
   const info = value.advisory ? advisoryInfo(value.advisory, language) : null;
   const start = Number.isSafeInteger(value.line) && value.line! > 0 ? value.line! : null;
-  const end = value.engine === 'trivy' && start !== null && Number.isSafeInteger(value.endLine) && value.endLine! >= start ? value.endLine : null;
+  const end = (value.engine === 'trivy' || value.engine === 'codex-security') && start !== null && Number.isSafeInteger(value.endLine) && value.endLine! >= start ? value.endLine : null;
   return `<article class="individual" id="${mode}-finding-${index + 1}"><h4>${index + 1}. ${e(value.originIds.map(identifier).join(' / ') || text("識別子未記録"))}</h4><p><span class="badge ${Object.hasOwn(labels, value.severity) ? e(value.severity) : ''}${text("\">重要度：")}${e(label(value.severity))}</span> <span class="badge">${e(label(value.evidenceState))}</span></p>
     ${details([[text("場所"), relative(value.file) + (value.file !== null && start !== null ? `${text("：")}${start}${end !== null && end !== start ? `–${end}` : ''}${text("行")}` : '')], [text("修正版の候補"), value.fixedVersions.map(version).join(' / ') || text("検査結果に記録なし")], [text("確度"), label(value.confidence)], [text("到達可能性・実悪用"), text("未確認")]])}
     ${info ? `<p>${text("公式重要度：")}${e(info.severity)}${text("。以下の適用条件は未確認です。")}</p>${list(info.conditions)}${info.sources.map(source => `<p class="advisory-source">${e(source)}</p>`).join('')}` : ''}</article>`;
