@@ -56,8 +56,6 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: read
-    env:
-      SCANMUX_LINUX_JOB_WORK: ${{ runner.temp }}/scanmux-linux-job
     steps:
       - name: Check out head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scanmux-linux-job-${{ github.run_id }}-a${{ github.run_attempt }}
-          path: ${{ env.SCANMUX_LINUX_JOB_WORK }}/evidence/
+          path: ${{ runner.temp }}/scanmux-linux-job/evidence/
           if-no-files-found: error
           retention-days: 7
           include-hidden-files: false

@@ -36,5 +36,7 @@ test('Linux job integration has isolated read-only permissions and existing pinn
     assert.equal(job.match(pattern)?.[1], existing.match(pattern)?.[1]);
   }
   assert.match(job, /run: bash scripts\/ci-linux-job\.sh\n/);
-  assert.match(job, /path: \$\{\{ env\.SCANMUX_LINUX_JOB_WORK \}\}\/evidence\/\n/);
+  // A job-level env cannot read the runner context; GitHub rejects the whole workflow file.
+  assert.doesNotMatch(job, /^ {4}env:\n/m);
+  assert.match(job, /path: \$\{\{ runner\.temp \}\}\/scanmux-linux-job\/evidence\/\n/);
 });
