@@ -476,7 +476,7 @@ class Pump:
 class Tracer:
     def __init__(self, pump):
         self.pump = pump
-        self.tasks, self.retired = {}, set()
+        self.tasks = {}
         self.root = self.root_exit = None
         self.stores = {}
         self.counts = {key: 0 for key in ['fork', 'vfork', 'clone', 'exec', 'exitEvent', 'signal', 'seccomp', 'interrupt', 'allStop', 'writes', 'execMigrations']}
@@ -511,18 +511,10 @@ class Tracer:
     def mount_id(descriptor):
         return int(next(line.split()[1] for line in read_small('/proc/self/fdinfo/' + str(descriptor)).splitlines() if line.startswith('mnt_id:')))
 
-    def add(self, tid, orphan=False):
-        # A late creator confirms a live orphan or its already reaped identity.
-        if tid in self.tasks:
-            require(not orphan and self.tasks[tid]['orphan'])
-            self.tasks[tid]['orphan'] = False
-            return
-        if tid in self.retired:
-            require(not orphan)
-            self.retired.remove(tid)
-            return
+    def add(self, tid):
+        require(tid not in self.tasks)
         self.tasks[tid] = {'stopped': False, 'new': True, 'interrupting': False, 'signal': 0, 'entry': None,
-                           'exiting': False, 'awaitStatus': False, 'vforkChild': None, 'lastStop': 'new', 'orphan': orphan}
+                           'exiting': False, 'awaitStatus': False, 'vforkChild': None, 'lastStop': 'new'}
 
     def resume(self, tid, op=None):
         task = self.tasks[tid]
@@ -558,35 +550,35 @@ class Tracer:
 
     def ingest(self, tid, value):
         if tid not in self.tasks and os.WIFSTOPPED(value) and value >> 16 == 4:
-            # exec may replace an already retired leader identity with an owned
+            # exec may replace an already reaped leader identity with an owned
             # nonleader; the actual EXEC/GETEVENTMSG is the migration evidence.
             require(event_message(tid) in self.tasks)
-            orphan = tid in self.retired
-            self.retired.discard(tid)
-            self.add(tid, orphan=orphan)
+            self.add(tid)
         if tid not in self.tasks:
             # A newborn's stop or death can precede (or outlive) its creator event.
             # Own it immediately so barriers, writes and closure use the same tasks.
             require(os.WIFEXITED(value) or os.WIFSIGNALED(value) or os.WIFSTOPPED(value)
                     and (value >> 16 == 128 and os.WSTOPSIG(value) in [signal.SIGTRAP, signal.SIGSTOP]
                          or value >> 16 == 6 and os.WSTOPSIG(value) == signal.SIGTRAP))
-            self.add(tid, orphan=True)
+            self.add(tid)
         task = self.tasks[tid]
         if os.WIFEXITED(value) or os.WIFSIGNALED(value):
             if tid == self.root:
                 self.root_exit = {'exitCode': os.WEXITSTATUS(value) if os.WIFEXITED(value) else None,
                                   'signal': os.WTERMSIG(value) if os.WIFSIGNALED(value) else None}
-            lost = task['entry'] is not None and task['entry']['phase'] in ['held', 'async']
+            lost = task['entry'] is not None and task['entry']['phase'] == 'held'
             self.release_entry(task)
             del self.tasks[tid]
-            if task['orphan']:
-                self.retired.add(tid)
-            require(not lost)
+            if lost:
+                # Death erased the held write result, including possible ENOSPC.
+                self.pump.initiate('error')
             return
         require(os.WIFSTOPPED(value))
         sig, event = os.WSTOPSIG(value), value >> 16
         # Group exit can supersede an already reported birth/interrupt stop.
         require(not task['stopped'] or event == 6 and sig == signal.SIGTRAP)
+        if event in [1, 2, 3, 4, 5]:
+            require(task['entry'] is None)
         self.last_event = {'tid': tid, 'signal': sig, 'event': event, 'previousStop': task['lastStop'],
                            'new': task['new'], 'interrupting': task['interrupting'],
                            'entryPhase': task['entry']['phase'] if task['entry'] is not None else None}
@@ -600,17 +592,27 @@ class Tracer:
             new = event_message(tid)
             if event == 2:
                 task['vforkChild'] = new
-            self.add(new)
+            if new not in self.tasks:
+                # Creator messages name reusable TIDs, not lifetimes. Reaped
+                # tracees may still exist as zombies waiting for their real parent.
+                try:
+                    fields = dict(line.split(':', 1) for line in read_small('/proc/%d/status' % new).splitlines() if ':' in line)
+                except (FileNotFoundError, ProcessLookupError):
+                    pass
+                else:
+                    if fields['TracerPid'].strip() == '1':
+                        self.add(new)
+                    else:
+                        require(fields['State'].split()[0] in ['Z', 'X'])
         elif event == 4:
             self.counts['exec'] += 1
             old = event_message(tid)
             self.release_entry(task)
             if old != tid:
-                previous = self.tasks.pop(old, None)
-                require(previous is not None)
+                previous = self.tasks.get(old)
+                require(previous is not None and previous['entry'] is None)
+                del self.tasks[old]
                 self.release_entry(previous)
-                if previous['orphan']:
-                    self.retired.add(old)
                 self.counts['execMigrations'] += 1
             task.update(lastStop='exec_event', exiting=False, new=False,
                         awaitStatus=False, vforkChild=None, signal=0)
@@ -621,9 +623,10 @@ class Tracer:
             require(sig == signal.SIGTRAP and not task['exiting'])
             task['lastStop'], task['exiting'] = 'exit_event', True
             self.counts['exitEvent'] += 1
-            lost = task['entry'] is not None and task['entry']['phase'] in ['held', 'async']
+            lost = task['entry'] is not None and task['entry']['phase'] == 'held'
             self.release_entry(task)
-            require(not lost)
+            if lost:
+                self.pump.initiate('error')
         elif event == 7:
             task['lastStop'] = 'syscall_entry'
             self.counts['seccomp'] += 1

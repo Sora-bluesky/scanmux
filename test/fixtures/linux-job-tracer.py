@@ -12,7 +12,7 @@ for stream in [sys.stdin, sys.stdout, sys.stderr]:
 
 source = Path(__file__).resolve().parents[2] / 'internal/linux-job-supervisor.py'
 tree = ast.parse(source.read_text(encoding='utf-8'))
-names = {'Invalid', 'Stopping', 'Tracer', 'require', 'integer'}
+names = {'Invalid', 'Stopping', 'Pump', 'Tracer', 'require', 'integer'}
 constants = {'SEIZE', 'WAITALL', 'MAX_INTEGER', 'OPERATIONS'}
 nodes = [node for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in names
          or isinstance(node, ast.Assign) and any(isinstance(item, ast.Name) and item.id in constants
@@ -28,9 +28,11 @@ def stop(event=128, sig=SIGTRAP):
 class Kernel:
     def __init__(self):
         self.live, self.dead, self.events, self.calls, self.closed = set(), set(), [], [], []
-        self.messages, self.info = {}, {}
+        self.messages, self.info, self.proc_status = {}, {}, {}
+        self.packets = []
+        self.fd_mode = stat.S_IFREG
         self.os = SimpleNamespace(O_PATH=0x200000, WNOHANG=1, open=self.open, close=self.closed.append,
-            fstat=lambda fd: SimpleNamespace(st_dev=1, st_ino=fd, st_mode=stat.S_IFREG),
+            fstat=lambda fd: SimpleNamespace(st_dev=1, st_ino=fd, st_mode=self.fd_mode),
             WIFSTOPPED=lambda value: value & 0xff == 0x7f, WSTOPSIG=lambda value: value >> 8 & 0xff,
             WIFEXITED=lambda value: value & 0x7f == 0, WEXITSTATUS=lambda value: value >> 8 & 0xff,
             WIFSIGNALED=lambda value: 0 < value & 0x7f < 0x7f, WTERMSIG=lambda value: value & 0x7f,
@@ -38,11 +40,12 @@ class Kernel:
             kill=lambda tid, sig: self.calls.append(('kill', tid, sig)))
         self.namespace = {'os': self.os, 'C': C, 'errno': errno, 'stat': stat, 'sys': sys,
             'signal': SimpleNamespace(SIGTRAP=SIGTRAP, SIGSTOP=SIGSTOP, SIGKILL=SIGKILL),
-            'security': lambda tid='self': 1, 'read_small': lambda file: 'mnt_id: 1',
+            'security': lambda tid='self': 1, 'read_small': self.read_small,
             'ptrace': self.ptrace, 'event_message': lambda tid: self.messages[tid],
             'syscall_info': lambda tid: self.info[tid].pop(0)}
         exec(code, self.namespace)
-        self.pump = SimpleNamespace(service=lambda delay=0: None, begin_cleanup=lambda: None, initiate=self.initiate)
+        self.pump = SimpleNamespace(service=lambda delay=0: None, begin_cleanup=lambda: None, initiate=self.initiate,
+            stop_reason=None, stop_event=None, emit=lambda kind, **fields: self.packets.append((kind, fields)))
         self.tracer = self.namespace['Tracer'](self.pump)
         self.tracer.root = 100
         self.tracer.layered_verified = True
@@ -57,6 +60,16 @@ class Kernel:
                    for task in self.tracer.tasks.values()), 'FD identity sampled without an all-stop'
         return 50
 
+    def read_small(self, file):
+        if file.endswith('/status'):
+            tid = int(file.split('/')[2])
+            if tid not in self.live | self.proc_status.keys():
+                raise FileNotFoundError(errno.ENOENT, 'no such task', file)
+            state, tracer = self.proc_status.get(tid, ('S', 1))
+            return 'State:\t%s\nTracerPid:\t%d' % (state, tracer)
+        assert file.startswith('/proc/self/fdinfo/'), file
+        return 'mnt_id: 1'
+
     def ptrace(self, op, tid, address=0, data=0):
         self.calls.append((op, tid, data))
         if getattr(self, 'esrch', None) == (op, tid):
@@ -64,8 +77,10 @@ class Kernel:
         return 0
 
     def initiate(self, reason, event=None):
-        self.stopped = reason, event
-        raise self.namespace['Stopping']()
+        try:
+            self.namespace['Pump'].initiate(self.pump, reason, event)
+        finally:
+            self.stopped = self.pump.stop_reason, self.pump.stop_event
 
     def waitpid(self, tid, flags):
         assert tid == -1 and flags == self.namespace['WAITALL'] | self.os.WNOHANG
@@ -238,31 +253,16 @@ def anomalies():
             raise AssertionError('accepted unrelated unknown stop: %x' % value)
         kernel.reap()
         cases += 1
-    for kind in ['duplicate-stop', 'duplicate-creator', 'duplicate-terminal', 'post-terminal-stop',
-                 'unmatched-exec', 'pending-write-exit', 'duplicate-exit', 'payload-sigtrap',
+    for kind in ['duplicate-stop', 'unmatched-exec', 'duplicate-exit', 'payload-sigtrap',
                  'payload-group-stop', 'syscall-without-entry']:
         kernel = Kernel()
         tracer = kernel.tracer
         if kind == 'duplicate-stop':
             kernel.ingest(101, stop())
             action = lambda: kernel.ingest(101, stop())
-        elif kind == 'duplicate-creator':
-            kernel.creator(3)
-            action = lambda: kernel.creator(3)
-        elif kind == 'duplicate-terminal':
-            kernel.ingest(101, 0)
-            action = lambda: kernel.ingest(101, 0)
-        elif kind == 'post-terminal-stop':
-            kernel.ingest(101, 0)
-            action = lambda: kernel.ingest(101, stop())
         elif kind == 'unmatched-exec':
             kernel.messages[101] = 999
             action = lambda: kernel.ingest(101, stop(4))
-        elif kind == 'pending-write-exit':
-            kernel.ingest(101, stop())
-            tracer.tasks[101]['entry'] = {'phase': 'async', 'held': None}
-            tracer.resume(101)
-            action = lambda: kernel.ingest(101, stop(6))
         elif kind == 'duplicate-exit':
             kernel.ingest(101, stop(6))
             action = lambda: kernel.ingest(101, stop(6))
@@ -317,6 +317,266 @@ def exec_migration():
     return 3
 
 
+def tid_reuse(scenario, arrival):
+    cases = 0
+    for event in [1, 2, 3]:
+        kernel = Kernel()
+        tracer = kernel.tracer
+        kernel.ingest(100, stop())
+        tracer.resume(100)
+        kernel.creator(3, 102)
+        kernel.ingest(102, stop())
+        tracer.resume(102)
+        kernel.ingest(101, stop())
+        tracer.resume(101)
+        if scenario == 'exec-reuse':
+            kernel.ingest(102, 0)
+            kernel.messages[102] = 101
+            kernel.ingest(102, stop(4))
+            tracer.resume(102)
+        else:
+            kernel.ingest(101, stop(6))
+            kernel.ingest(101, 0)
+        assert 101 not in tracer.tasks
+        if scenario == 'closure-reuse':
+            kernel.ingest(102, stop(6))
+            kernel.ingest(102, SIGKILL)
+        kernel.dead.discard(101)
+        if scenario in ['creator-reuse', 'closure-reuse'] or arrival == 'before':
+            kernel.creator(event)
+            assert 101 in tracer.tasks, 'creator dropped a reused live TID'
+            if event == 2:
+                kernel.ingest(100, stop(5))
+                tracer.resume(100)
+        if scenario == 'closure-reuse':
+            kernel.events = [(100, stop(6)), (100, 0), (101, stop()), (101, stop(6)), (101, 0)]
+            while tracer.tasks:
+                tracer.step()
+            assert not kernel.live and not kernel.events, 'launch closed with a live child'
+        else:
+            kernel.ingest(101, stop())
+            task = tracer.tasks[101]
+            assert task['stopped'], 'birth dropped a reused TID'
+            if arrival == 'after-birth':
+                kernel.creator(event)
+                assert tracer.tasks[101] is task
+                if event == 2:
+                    kernel.ingest(100, stop(5))
+                    tracer.resume(100)
+            tracer.resume(101)
+            # A still later creator from the old lifetime must not reset this one.
+            kernel.messages[102 if 102 in tracer.tasks else 100] = 101
+            creator = 102 if 102 in tracer.tasks else 100
+            kernel.ingest(creator, stop(3))
+            assert tracer.tasks[101] is task and not task['stopped']
+            tracer.resume(creator)
+            kernel.ingest(101, stop(6))
+            assert 101 in tracer.tasks
+            kernel.ingest(101, 0)
+            if arrival == 'after-terminal':
+                kernel.creator(event)
+                assert 101 not in tracer.tasks
+                if event == 2:
+                    kernel.ingest(100, stop(5))
+                    tracer.resume(100)
+        kernel.reap()
+        cases += 1
+    return cases
+
+
+def unreported_child():
+    kernel = Kernel()
+    kernel.ingest(100, 0)
+    kernel.live.add(101)
+    assert not kernel.tracer.tasks
+    kernel.reap()
+    assert ('kill', 101, SIGKILL) in kernel.calls
+    kernel = Kernel()
+    kernel.ingest(100, 0)
+    kernel.live.add(101)
+    def no_children():
+        raise ChildProcessError()
+    kernel.events = [no_children]
+    try:
+        kernel.tracer.kill_reap()
+    except kernel.namespace['Invalid'] as error:
+        assert error.detail['operation'] == 'kill_reap'
+    else:
+        raise AssertionError('final /proc check accepted a live unreported child')
+    kernel.reap()
+    return 2
+
+
+def creator_liveness():
+    cases = 0
+    for event in [1, 2, 3]:
+        for state in ['absent', 'traced', 'zombie', 'dead', 'untraced-live']:
+            kernel = Kernel()
+            if state in ['absent', 'zombie', 'dead']:
+                kernel.dead.add(101)
+            if state != 'absent':
+                kernel.proc_status[101] = {'traced': ('t', 1), 'zombie': ('Z', 0),
+                                          'dead': ('X', 0), 'untraced-live': ('S', 0)}[state]
+            try:
+                kernel.creator(event)
+            except kernel.namespace['Invalid'] as error:
+                assert state == 'untraced-live' and error.detail['operation'] == 'ingest'
+            else:
+                assert state != 'untraced-live', 'creator silently accepted an untraced live child'
+                assert (101 in kernel.tracer.tasks) == (state == 'traced'), 'creator resurrected an untraced zombie'
+            kernel.proc_status.clear()
+            kernel.reap()
+            cases += 1
+    return cases
+
+
+def write_death(scenario, arrival, phases):
+    cases = 0
+    for phase in phases:
+        for nr in [1, 18]:
+            for terminal in [0, SIGKILL]:
+                kernel = Kernel()
+                tracer = kernel.tracer
+                kernel.ingest(100, stop())
+                tracer.resume(100)
+                if arrival == 'before':
+                    kernel.creator(3)
+                kernel.ingest(101, stop())
+                tracer.resume(101)
+                kernel.fd_mode = stat.S_IFREG if phase == 'held' else stat.S_IFIFO
+                kernel.info[101] = [{'op': 3, 'nr': nr, 'args': [4, 0, 1, 0, 0, 0]}]
+                kernel.events = [(101, stop(7)), (100, stop())]
+                death = stop(6) if scenario == 'write-exit' else terminal
+                if phase == 'held':
+                    kernel.events.append((101, death))
+                else:
+                    tracer.step()
+                    assert tracer.tasks[101]['entry']['phase'] == 'async'
+                    kernel.events = [(101, death)]
+                try:
+                    tracer.step()
+                except kernel.namespace['Stopping']:
+                    assert phase == 'held', 'async write death stopped the job'
+                    assert kernel.stopped == ('error', None), 'death fabricated an ENOSPC observation'
+                else:
+                    assert phase == 'async', 'lost held write result silently accepted'
+                    assert not hasattr(kernel, 'stopped') and kernel.pump.stop_reason is None
+                assert not kernel.packets, 'death emitted a fabricated native fact'
+                assert tracer.counts['writes'] == 0 and not kernel.info[101]
+                assert tracer.progress['phase'] != 'syscall_exit_observed'
+                assert kernel.closed.count(50) == 1, 'held FD was leaked or closed twice'
+                if scenario == 'write-exit':
+                    assert 101 in tracer.tasks and tracer.tasks[101]['entry'] is None
+                    assert tracer.tasks[101]['exiting']
+                    if arrival == 'after-exit':
+                        if tracer.tasks[100]['stopped']:
+                            tracer.resume(100)
+                        kernel.creator(3)
+                    kernel.ingest(101, terminal)
+                assert 101 not in tracer.tasks
+                if arrival == 'after-terminal':
+                    if tracer.tasks[100]['stopped']:
+                        tracer.resume(100)
+                    kernel.creator(3)
+                    assert 101 not in tracer.tasks
+                if phase == 'async':
+                    kernel.events = [(100, stop(6)), (100, 0)]
+                    while tracer.tasks:
+                        tracer.step()
+                    assert tracer.root_exit == {'exitCode': 0, 'signal': None}
+                    assert not kernel.live and not kernel.events and not kernel.packets
+                    assert kernel.pump.stop_reason is None and kernel.pump.stop_event is None
+                    assert tracer.counts['writes'] == 0
+                kernel.reap()
+                assert kernel.closed.count(50) == 1
+                cases += 1
+    return cases
+
+
+def write_controls():
+    cases = 0
+    for phase in ['held', 'async']:
+        for event in [1, 2, 3, 4, 5, 7, 0]:
+            kernel = Kernel()
+            tracer = kernel.tracer
+            kernel.ingest(100, stop())
+            tracer.resume(100)
+            entry = {'phase': phase, 'held': 50 if phase == 'held' else None}
+            tracer.tasks[100]['entry'] = entry
+            kernel.messages[100] = 100 if event == 4 else 101
+            tracer.tasks[100]['vforkChild'] = 101 if event == 5 else None
+            kernel.info[100] = [{'op': 3, 'nr': 1}]
+            try:
+                kernel.ingest(100, stop(event, 10 if event == 0 else SIGTRAP))
+            except kernel.namespace['Invalid'] as error:
+                assert error.detail['operation'] == 'ingest'
+            else:
+                raise AssertionError('accepted a continuing task with a lost write: %s/%d' % (phase, event))
+            assert tracer.tasks[100]['entry'] is entry
+            kernel.reap()
+            cases += 1
+    for death in [stop(6), 0, SIGKILL]:
+        kernel = Kernel()
+        kernel.ingest(101, stop())
+        kernel.tracer.resume(101)
+        kernel.info[101] = [{'op': 3, 'nr': 1, 'args': [4, 0, 1, 0, 0, 0]}]
+        kernel.ingest(101, stop(7))
+        kernel.ingest(101, death)
+        assert kernel.tracer.counts['writes'] == 0 and not hasattr(kernel, 'stopped')
+        assert 50 not in kernel.closed
+        kernel.reap()
+        cases += 1
+    for reason in ['disk', 'memory', 'deadline', 'retained', 'cancelled', 'error']:
+        kernel = Kernel()
+        kernel.ingest(101, stop())
+        kernel.tracer.resume(101)
+        kernel.tracer.tasks[101]['entry'] = {'phase': 'held', 'held': 50}
+        kernel.pump.stop_reason, kernel.pump.stop_event = reason, {'prior': True}
+        try:
+            kernel.ingest(101, stop(6))
+        except kernel.namespace['Stopping']:
+            assert kernel.stopped == (reason, {'prior': True})
+        else:
+            raise AssertionError('lost write result did not stop')
+        assert not kernel.packets
+        kernel.reap()
+        cases += 1
+    for phase in ['held', 'async']:
+        for nr in [1, 18]:
+            for result in [1, -errno.EBADF, -errno.ENOSPC, -512]:
+                kernel = Kernel()
+                tracer = kernel.tracer
+                kernel.ingest(100, stop())
+                tracer.resume(100)
+                kernel.fd_mode = stat.S_IFREG if phase == 'held' else stat.S_IFIFO
+                kernel.info[100] = [{'op': 3, 'nr': nr, 'args': [4, 0, 1, 0, 0, 0]},
+                                    {'op': 2, 'rval': result, 'isError': result < 0}]
+                kernel.events = [(100, stop(7))]
+                if phase == 'async':
+                    tracer.step()
+                kernel.events.append((100, stop(0, SIGTRAP | 0x80)))
+                try:
+                    tracer.step()
+                except kernel.namespace['Stopping']:
+                    assert phase == 'held' and result == -errno.ENOSPC
+                    reason, observed = kernel.stopped
+                    assert reason == 'disk' and observed['returned'] == -28
+                    assert observed['syscall'] == ('write' if nr == 1 else 'pwrite64')
+                    assert observed['store'] == 'tmp' and observed['inode'] == 50
+                    assert observed['device'] == observed['mountId'] == 1
+                    assert observed['stopBeforeNextInstruction'] and kernel.packets == [('stop', {'event': observed})]
+                except kernel.namespace['Invalid']:
+                    assert phase == 'async' and result == -errno.ENOSPC
+                else:
+                    assert result != -errno.ENOSPC and not kernel.packets
+                    assert tracer.tasks[100]['entry'] is None
+                assert tracer.counts['writes'] == (0 if result == -512 else 1)
+                kernel.reap()
+                assert kernel.closed.count(50) == 1
+                cases += 1
+    return cases
+
+
 scenario, arrival = sys.argv[1:3]
 if scenario in ['birth-exit', 'exit-first', 'terminal-first']:
     cases = lifecycle(scenario, arrival)
@@ -324,6 +584,18 @@ elif scenario == 'anomalies':
     cases = anomalies()
 elif scenario == 'exec-migration':
     cases = exec_migration()
+elif scenario in ['birth-reuse', 'creator-reuse', 'closure-reuse', 'exec-reuse']:
+    cases = tid_reuse(scenario, arrival)
+elif scenario == 'unreported-child':
+    cases = unreported_child()
+elif scenario == 'creator-liveness':
+    cases = creator_liveness()
+elif scenario in ['write-exit', 'write-terminal']:
+    cases = write_death(scenario, arrival, ['held'])
+elif scenario in ['async-write-exit', 'async-write-terminal']:
+    cases = write_death(scenario[6:], arrival, ['async'])
+elif scenario == 'write-controls':
+    cases = write_controls()
 else:
     cases = progress(scenario)
 print(json.dumps({'scenario': scenario, 'arrival': arrival, 'cases': cases}))
