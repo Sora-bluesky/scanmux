@@ -476,7 +476,7 @@ class Pump:
 class Tracer:
     def __init__(self, pump):
         self.pump = pump
-        self.tasks, self.orphans = {}, {}
+        self.tasks = {}
         self.root = self.root_exit = None
         self.stores = {}
         self.counts = {key: 0 for key in ['fork', 'vfork', 'clone', 'exec', 'exitEvent', 'signal', 'seccomp', 'interrupt', 'allStop', 'writes', 'execMigrations']}
@@ -550,26 +550,35 @@ class Tracer:
 
     def ingest(self, tid, value):
         if tid not in self.tasks and os.WIFSTOPPED(value) and value >> 16 == 4:
-            # exec may replace an already retired leader identity with an owned
+            # exec may replace an already reaped leader identity with an owned
             # nonleader; the actual EXEC/GETEVENTMSG is the migration evidence.
             require(event_message(tid) in self.tasks)
             self.add(tid)
         if tid not in self.tasks:
-            require(os.WIFSTOPPED(value) and tid not in self.orphans)
-            self.orphans[tid] = value
-            return
+            # A newborn's stop or death can precede (or outlive) its creator event.
+            # Own it immediately so barriers, writes and closure use the same tasks.
+            require(os.WIFEXITED(value) or os.WIFSIGNALED(value) or os.WIFSTOPPED(value)
+                    and (value >> 16 == 128 and os.WSTOPSIG(value) in [signal.SIGTRAP, signal.SIGSTOP]
+                         or value >> 16 == 6 and os.WSTOPSIG(value) == signal.SIGTRAP))
+            self.add(tid)
         task = self.tasks[tid]
         if os.WIFEXITED(value) or os.WIFSIGNALED(value):
             if tid == self.root:
                 self.root_exit = {'exitCode': os.WEXITSTATUS(value) if os.WIFEXITED(value) else None,
                                   'signal': os.WTERMSIG(value) if os.WIFSIGNALED(value) else None}
-            lost = task['entry'] is not None and task['entry']['phase'] in ['held', 'async']
+            lost = task['entry'] is not None and task['entry']['phase'] == 'held'
             self.release_entry(task)
             del self.tasks[tid]
-            require(not lost)
+            if lost:
+                # Death erased the held write result, including possible ENOSPC.
+                self.pump.initiate('error')
             return
-        require(os.WIFSTOPPED(value) and not task['stopped'])
+        require(os.WIFSTOPPED(value))
         sig, event = os.WSTOPSIG(value), value >> 16
+        # Group exit can supersede an already reported birth/interrupt stop.
+        require(not task['stopped'] or event == 6 and sig == signal.SIGTRAP)
+        if event in [1, 2, 3, 4, 5]:
+            require(task['entry'] is None)
         self.last_event = {'tid': tid, 'signal': sig, 'event': event, 'previousStop': task['lastStop'],
                            'new': task['new'], 'interrupting': task['interrupting'],
                            'entryPhase': task['entry']['phase'] if task['entry'] is not None else None}
@@ -583,16 +592,26 @@ class Tracer:
             new = event_message(tid)
             if event == 2:
                 task['vforkChild'] = new
-            self.add(new)
-            if new in self.orphans:
-                self.ingest(new, self.orphans.pop(new))
+            if new not in self.tasks:
+                # Creator messages name reusable TIDs, not lifetimes. Reaped
+                # tracees may still exist as zombies waiting for their real parent.
+                try:
+                    fields = dict(line.split(':', 1) for line in read_small('/proc/%d/status' % new).splitlines() if ':' in line)
+                except (FileNotFoundError, ProcessLookupError):
+                    pass
+                else:
+                    if fields['TracerPid'].strip() == '1':
+                        self.add(new)
+                    else:
+                        require(fields['State'].split()[0] in ['Z', 'X'])
         elif event == 4:
             self.counts['exec'] += 1
             old = event_message(tid)
             self.release_entry(task)
             if old != tid:
-                previous = self.tasks.pop(old, None)
-                require(previous is not None)
+                previous = self.tasks.get(old)
+                require(previous is not None and previous['entry'] is None)
+                del self.tasks[old]
                 self.release_entry(previous)
                 self.counts['execMigrations'] += 1
             task.update(lastStop='exec_event', exiting=False, new=False,
@@ -601,11 +620,13 @@ class Tracer:
             require(task['vforkChild'] is not None)
             task['lastStop'], task['vforkChild'] = 'vfork_done', None
         elif event == 6:
+            require(sig == signal.SIGTRAP and not task['exiting'])
             task['lastStop'], task['exiting'] = 'exit_event', True
             self.counts['exitEvent'] += 1
-            lost = task['entry'] is not None and task['entry']['phase'] in ['held', 'async']
+            lost = task['entry'] is not None and task['entry']['phase'] == 'held'
             self.release_entry(task)
-            require(not lost)
+            if lost:
+                self.pump.initiate('error')
         elif event == 7:
             task['lastStop'] = 'syscall_entry'
             self.counts['seccomp'] += 1
@@ -671,7 +692,7 @@ class Tracer:
                             raise
                         task['awaitStatus'] = True
         interrupt_running()
-        while not all(task['stopped'] or task['exiting'] or task['vforkChild'] is not None for task in self.tasks.values()) or self.orphans:
+        while not all(task['stopped'] or task['exiting'] or task['vforkChild'] is not None for task in self.tasks.values()):
             self.ingest(*self.wait())
             interrupt_running()
         self.counts['allStop'] += 1
@@ -814,7 +835,7 @@ class Tracer:
         os.close(gate_write)
         while self.tasks:
             self.step()
-        require(not self.orphans and self.root_exit is not None)
+        require(self.root_exit is not None)
         return startup
 
     def kill_reap(self):
@@ -844,10 +865,9 @@ class Tracer:
                 task = self.tasks.pop(tid, None)
                 if task is not None:
                     self.release_entry(task)
-                self.orphans.pop(tid, None)
             else:
                 raise Invalid()
-        require(not self.tasks and not self.orphans and [name for name in os.listdir('/proc') if name.isdecimal()] == ['1'])
+        require(not self.tasks and [name for name in os.listdir('/proc') if name.isdecimal()] == ['1'])
 
     def close(self):
         for store in self.stores.values():
