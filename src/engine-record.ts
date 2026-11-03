@@ -2,7 +2,7 @@ import type { BigIntStats } from 'node:fs';
 import { lstat, open, readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { boundedRead, canonical, hash, SafeError } from './safety.ts';
+import { boundedRead, canonical, hash, safeRelative, SafeError } from './safety.ts';
 import type { Config } from './model.ts';
 import {
   ledgerLimit, ledgerPlatforms, nextLedgerLine, parseWholeLedger, readLedgerFile, readPinnedLedger, unpublishedReasons,
@@ -15,6 +15,7 @@ import { evidencePath, verifyPublisher, type AdmissionScope } from './runtime-ad
 const scanmuxVersion = '0.1.0';
 type RequestEvidence =
   | { kind: 'sigstore-slsa'; bundle: string; trustedRoot: string; sourceRef: string; sourceDigest: string }
+  | { kind: 'sigstore-slsa-archive'; bundle: string; trustedRoot: string; sourceRef: string; sourceDigest: string; archive: string; member: string }
   | { kind: 'none'; reason: typeof unpublishedReasons[number] };
 interface EngineRecordRequest {
   component: RuntimeComponent; platform: typeof ledgerPlatforms[number]; version: string; change: string; artifact: string; evidence: RequestEvidence;
@@ -70,10 +71,16 @@ function parseRequest(input: unknown): EngineRecordRequest {
   const kind = (raw as Record<string, unknown>).kind;
   let evidence: RequestEvidence;
   if (kind === 'none') evidence = { kind, reason: member(exact(raw, ['kind', 'reason']).reason, unpublishedReasons) };
-  else if (kind === 'sigstore-slsa') {
-    const item = exact(raw, ['kind', 'bundle', 'trustedRoot', 'sourceRef', 'sourceDigest']);
+  else if (kind === 'sigstore-slsa' || kind === 'sigstore-slsa-archive') {
+    const item = exact(raw, ['kind', 'bundle', 'trustedRoot', 'sourceRef', 'sourceDigest', ...(kind === 'sigstore-slsa-archive' ? ['archive', 'member'] : [])]);
     if (typeof item.sourceRef !== 'string' || typeof item.sourceDigest !== 'string') invalid();
-    evidence = { kind, bundle: bundleFile(item.bundle), trustedRoot: absolute(item.trustedRoot), sourceRef: item.sourceRef, sourceDigest: item.sourceDigest };
+    const common = { bundle: bundleFile(item.bundle), trustedRoot: absolute(item.trustedRoot), sourceRef: item.sourceRef, sourceDigest: item.sourceDigest };
+    if (kind === 'sigstore-slsa') evidence = { kind, ...common };
+    else {
+      let name: string;
+      try { name = safeRelative(item.member); } catch { invalid(); }
+      evidence = { kind, ...common, archive: absolute(item.archive), member: name };
+    }
   } else invalid();
   return { component: member(value.component, runtimeComponents), platform: member(value.platform, ledgerPlatforms), version: value.version,
     change: value.change, artifact: absolute(value.artifact), evidence };
@@ -124,15 +131,19 @@ export async function recordEngine(requestFile: string, config: Config, scope: A
   try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await boundedRead(await canonical(requestFile), 65536))); } catch { invalid(); }
   const request = parseRequest(input), policy = policyTwo(config), { ledger: pin, verifier } = policy.provenance;
   const requirement = policy.provenance.require.find(item => item.component === request.component);
-  const sigstore = request.evidence.kind === 'sigstore-slsa';
+  const sigstore = request.evidence.kind !== 'none';
   if (sigstore && requirement?.level !== 'publisher') throw new SafeError('engine_record_publisher_unrequired');
   admitRuntimePolicy(policy, sigstore ? [{ component: 'gh', sha256: verifier.sha256 }] : []);
   const artifact = await pinned(await canonical(request.artifact));
-  const evidence: LedgerEvidence = request.evidence.kind === 'none' ? request.evidence : {
-    kind: 'sigstore-slsa', bundle: await pinned(await evidencePath(request.evidence.bundle, scope.root)),
-    trustedRoot: await pinned(await evidencePath(request.evidence.trustedRoot, scope.root)),
-    sourceRef: request.evidence.sourceRef, sourceDigest: request.evidence.sourceDigest,
-  };
+  let evidence: LedgerEvidence;
+  if (request.evidence.kind === 'none') evidence = request.evidence;
+  else {
+    const common = { bundle: await pinned(await evidencePath(request.evidence.bundle, scope.root)),
+      trustedRoot: await pinned(await evidencePath(request.evidence.trustedRoot, scope.root)),
+      sourceRef: request.evidence.sourceRef, sourceDigest: request.evidence.sourceDigest };
+    evidence = request.evidence.kind === 'sigstore-slsa' ? { kind: request.evidence.kind, ...common }
+      : { kind: request.evidence.kind, ...common, archive: await pinned(await evidencePath(request.evidence.archive, scope.root)), member: request.evidence.member };
+  }
   const fields: LedgerFields = {
     recordedAt: new Date().toISOString(), component: request.component, platform: request.platform, version: request.version,
     sha256: artifact.sha256, change: request.change,
@@ -154,9 +165,10 @@ export async function recordEngine(requestFile: string, config: Config, scope: A
     try { next = nextLedgerLine(current.entries, fields); }
     catch (error) { if (error instanceof SafeError && error.code === 'engine_ledger_line_invalid') invalid(); throw error; }
     if (read.content.length + next.bytes.length > ledgerLimit) throw new SafeError('engine_ledger_full');
-    if (requirement?.level === 'publisher' && evidence.kind === 'sigstore-slsa') {
+    if (requirement?.level === 'publisher' && evidence.kind !== 'none') {
       const check: PublisherCheck = { component: request.component, file: artifact.path, ledgerSeq: next.entry.seq, bundle: evidence.bundle, trustedRoot: evidence.trustedRoot,
-        expected: { ...requirement.publisher, sha256: artifact.sha256, sourceRef: evidence.sourceRef, sourceDigest: evidence.sourceDigest } };
+        expected: { ...requirement.publisher, sha256: artifact.sha256, sourceRef: evidence.sourceRef, sourceDigest: evidence.sourceDigest },
+        ...(evidence.kind === 'sigstore-slsa-archive' ? { archive: { file: evidence.archive, member: evidence.member } } : {}) };
       const decision = decideProvenance(policy, check, await verifyPublisher(policy, check, scope));
       if (decision.kind === 'refused') throw new ProvenanceRefusalError({ ...decision, engine: { ...decision.engine, ledgerSeq: null } });
     }

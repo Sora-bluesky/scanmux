@@ -107,6 +107,8 @@ test('ledger lines are canonical: seq and prev chain, and any non-canonical spel
     + JSON.stringify(sigstore.bundle.path) + ',"sha256":"' + sha('b') + '"},"trustedRoot":{"path":' + JSON.stringify(sigstore.trustedRoot.path) + ',"sha256":"' + sha('d')
     + '"},"sourceRef":"refs/tags/v2.7.0","sourceDigest":"bfe2f84abd2f09fe0b83ba7f6dad40d296762f40"}}\n');
   assert.equal(heads[0], hash(lines[0].subarray(0, -1)));
+  const { seq, prev, ...original } = parseLedgerLine(lines[0].subarray(0, -1));
+  assert.deepEqual(nextLedgerLine([], original).bytes, lines[0], 'existing sigstore-slsa encoding round-trips byte for byte');
   const line = lines[1].subarray(0, -1).toString();
   assert.deepEqual(parseLedgerLine(line), entries[1]);
   const value = JSON.parse(line);
@@ -119,6 +121,20 @@ test('ledger lines are canonical: seq and prev chain, and any non-canonical spel
   ];
   for (const input of rejected) assert.throws(() => parseLedgerLine(input), (error: unknown) => error instanceof SafeError && error.code === 'engine_ledger_line_invalid', input);
   assert.throws(() => nextLedgerLine([], fields({ change: '' })), SafeError);
+});
+
+test('archive evidence round-trips exact member names and refuses unsafe paths and extra fields', () => {
+  const archive = { path: absolute('trivy.zip'), sha256: sha('c') };
+  for (const name of ['trivy.exe', 'bin/trivy.exe']) {
+    const evidence = { ...sigstore, kind: 'sigstore-slsa-archive' as const, archive, member: name };
+    const next = nextLedgerLine([], fields({ evidence }));
+    assert.deepEqual(parseLedgerLine(next.bytes.subarray(0, -1)).evidence, evidence);
+  }
+  const evidence = { ...sigstore, kind: 'sigstore-slsa-archive' as const, archive, member: 'trivy.exe' };
+  for (const change of [
+    ...['', '../trivy.exe', 'bin/../trivy.exe', '/trivy.exe', 'bin\\trivy.exe', 'bin//trivy.exe', './trivy.exe', 'bin/', 'C:/trivy.exe', 'trivy.exe\u0000'].map(member => ({ ...evidence, member })),
+    { ...evidence, archive: { ...archive, path: 'relative.zip' } }, { ...evidence, extra: true }, { ...sigstore, member: 'trivy.exe' },
+  ]) assert.throws(() => parseLedgerLine(JSON.stringify({ ...nextLedgerLine([], fields()).entry, evidence: change })), /engine_ledger_line_invalid/);
 });
 
 test('readPinnedLedger trusts only the pinned prefix and refuses any change to it', async () => {
@@ -214,12 +230,29 @@ test('verifier outcomes map to verified, invalid or unverifiable with the ledger
   assert.deepEqual(decideProvenance(value, check, 'verified'), { kind: 'verified' });
   for (const [outcome, code, state, reason] of [['rejected', 'provenance_invalid_osv', 'invalid', 'signature_rejected'], ['failed', 'provenance_unverifiable_osv', 'unverifiable', 'verifier_failed'],
     ['evidence_changed', 'provenance_unverifiable_osv', 'unverifiable', 'evidence_changed'], ['evidence_unreadable', 'provenance_unverifiable_osv', 'unverifiable', 'evidence_unreadable'],
-    ['artifact_changed', 'provenance_unverifiable_osv', 'unverifiable', 'artifact_changed'], ['artifact_unreadable', 'provenance_unverifiable_osv', 'unverifiable', 'artifact_unreadable']] as const) {
+    ['artifact_changed', 'provenance_unverifiable_osv', 'unverifiable', 'artifact_changed'], ['artifact_unreadable', 'provenance_unverifiable_osv', 'unverifiable', 'artifact_unreadable'],
+    ['archive_member_mismatch', 'provenance_invalid_osv', 'invalid', 'archive_member_mismatch'],
+    ['archive_changed', 'provenance_unverifiable_osv', 'unverifiable', 'archive_changed'], ['archive_unreadable', 'provenance_unverifiable_osv', 'unverifiable', 'archive_unreadable']] as const) {
     const decision = decideProvenance(value, check, outcome);
     assert.equal(decision.kind, 'refused');
     if (decision.kind !== 'refused') continue;
     assert.deepEqual(decision.engine, { component: 'osv', state, reason, ledgerSeq: 1 });
     assert.equal(new ProvenanceRefusalError(decision).code, code);
+  }
+});
+
+test('publisher planning prefers either verifiable evidence kind over none and selects the latest of both kinds', () => {
+  const archive = { ...sigstore, kind: 'sigstore-slsa-archive' as const, archive: { path: absolute('trivy.zip'), sha256: sha('c') }, member: 'trivy.exe' };
+  const subject: ProvenanceSubject = { component: 'osv', sha256: sha('a'), file: absolute('osv.exe') };
+  const policy = parsedPolicy([publisherOsv]);
+  for (const kinds of [[sigstore, archive], [archive, sigstore]]) {
+    const ledger = chain([...kinds.map(evidence => fields({ evidence })), fields({ evidence: { kind: 'none', reason: 'locally_built' } })]).entries;
+    const plan = planProvenance(policy, ledger, [subject]);
+    assert.equal(plan.kind, 'ready');
+    if (plan.kind !== 'ready') continue;
+    assert.equal(plan.checks[0].ledgerSeq, 2);
+    assert.deepEqual(plan.checks[0].archive, kinds[1].kind === 'sigstore-slsa-archive' ? { file: archive.archive, member: archive.member } : undefined);
+    assert.equal(plan.checks[0].expected.sha256, subject.sha256, 'engine pin remains distinct from the archive pin');
   }
 });
 

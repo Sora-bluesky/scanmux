@@ -24,7 +24,9 @@ The accepted executable SHA-256 is `94618922c9eb324d7099bf217b01504bfc1f87a0d46d
 The acquisition evidence for the Windows x64 ZIP uses SHA-256 `1051f49cb22d5284f43425f72aad9cda63ca12ceb92e7caa06903490c82dc9bf`.
 Verify the ZIP and the extracted executable separately and retain the ZIP-to-executable relationship with the acquisition record.
 
-A ZIP attestation is not proof of the executable's publisher.
+A ZIP attestation alone is not proof of the executable's publisher.
+For `publisher`, `sigstore-slsa-archive` evidence can bind a verified ZIP attestation to the pinned executable: ScanMux privately copies and re-hashes the ZIP, requires the exact `trivy.exe` member's SHA-256 to match the engine pin, then verifies the ZIP copy with `gh` against the ZIP hash and configured publisher identity. A missing, duplicate or mismatched member, or an unparseable ZIP, is invalid; an unreadable or changed ZIP is unverifiable.
+Use an absolute ZIP path as `archive` and `"member":"trivy.exe"` alongside `bundle`, `trustedRoot`, `sourceRef` and `sourceDigest` in the `engine-record` request's evidence. The ZIP remains outside the target and follows the same evidence-path rules. See [runtime controls](runtime-controls.md). This describes the supported verification chain; it does not claim verification of the real Trivy release.
 A matching digest fixes bytes; it does not establish that the distribution or its embedded checks are correct, fresh or honest.
 
 Add the following entry to `tools` in the existing external schema 1 or 2 config. Keep the other required tool pins, including the Windows process owner; this fragment is not a complete config. Paths must be absolute and outside the target repository.

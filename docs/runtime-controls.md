@@ -95,15 +95,21 @@ A `scanmux.runtime-policy/v2` policy adds `provenance`: a pinned `gh`, a local l
 | `recorded` | Engine SHA256 appears in the pinned ledger |
 | `publisher` | The same ledger check plus offline publisher verification |
 
-Private re-hashed copies of the engine, bundle and trusted root go to the pinned, version-checked `gh` `attestation verify` with `--custom-trusted-root` and no token.
+Private copies of the engine, bundle and trusted root are re-hashed. With `sigstore-slsa`, the engine copy goes to the pinned, version-checked `gh` `attestation verify` with `--custom-trusted-root` and no token.
 
 It passes only on exit 0 with JSON matching the engine SHA256, predicate type and every expected certificate value, GitHub-hosted runner included.
+
+For an engine shipped inside a ZIP, `sigstore-slsa-archive` adds a pinned `archive` and an exact `member` name to the same evidence fields. The request uses an absolute ZIP path; the ledger stores its path and SHA-256. The member is a plain file name or forward-slash relative path, with no `..`, leading slash or backslash; matching is case-sensitive.
+ScanMux privately copies the ZIP through the existing copy budget, re-checks its pin and reads the exact member through its ZIP reader. The member's SHA-256 must match the pinned engine. Only then does `gh` verify the ZIP copy, and its JSON must name the ZIP SHA-256 with the same predicate and certificate checks.
+A ZIP attestation alone never proves the executable: both the verified ZIP attestation and the member-to-engine hash match are required. This proves the byte relationship and configured publisher identity, not the engine's correctness, freshness or safety. Only ZIP is supported.
 
 Record an update with a request (`evidence` may also be `{"kind":"none","reason":"publisher_evidence_unpublished"}`):
 
 ```json
 {"schema":"scanmux.engine-record/v1","component":"osv","platform":"windows-x64","version":"1.0.0","change":"Update OSV","artifact":"C:/scanmux/tools/osv.exe","evidence":{"kind":"sigstore-slsa","bundle":"C:/scanmux/osv.sigstore.json","trustedRoot":"C:/scanmux/trusted-root.jsonl","sourceRef":"refs/tags/v1.0.0","sourceDigest":"<source commit SHA>"}}
 ```
+
+For a ZIP request, use `"kind":"sigstore-slsa-archive"` and add `"archive":"C:/scanmux/trivy.zip","member":"trivy.exe"` to `evidence`, with the ZIP's bundle and the publisher's expected source values. The executable remains `artifact`. ZIP paths follow the same local-path, UNC and link rules as the bundle and trusted root. Existing `sigstore-slsa` ledger encodings and hashes are unchanged.
 
 `scanmux engine-record /absolute/request.json --config /absolute/config.json` hashes the files, verifies Sigstore evidence alike and appends nothing on failure.
 The same identity and evidence within the pin returns the existing entry.
@@ -118,13 +124,15 @@ Refusals exit `2` for `deps` (failure), or `4` for other commands, before any en
 
 | Code | Cause |
 |---|---|
-| `provenance_invalid_<component>` | Signature rejected |
+| `provenance_invalid_<component>` | Signature rejected, or ZIP member missing, duplicated, malformed or mismatched |
 | `provenance_unverifiable_<component>` | No usable evidence, an unreadable or changed copy, or failed `gh` |
 | `provenance_unrecorded_<component>` | Unhashed or not in the ledger |
 | `provenance_ledger_mismatch` | Ledger pin mismatch |
 
 For commands other than `deps`, the first three add `"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}` after `policy`.
 `provenance_ledger_mismatch` adds neither a `policy` nor an `engine` object.
+
+ZIP refusals use `engine.reason: "archive_member_mismatch"` with state `invalid` for a missing, duplicate or hash-mismatched member, or an unparseable ZIP. An unreadable ZIP uses `archive_unreadable`; a ZIP that differs from its pin uses `archive_changed`, both with state `unverifiable`.
 
 Native commands, `job-scan` and `host-job-scan` apply v2; job Linux engines are host-verified before mounting. `serve` refuses schema 2.
 
