@@ -157,7 +157,7 @@ test('copy budget: plain scan refuses the process-owner copy as INCOMPLETE with 
   assert.equal(result.code, 3); assert.equal(result.out, '');
   assert.deepEqual(JSON.parse(result.err), { schema: 'scanmux.error/v1', gate: 'INCOMPLETE', exitCode: 3, error: 'job_disk_copy_limit' });
 });
-test('copy budget: job-scan runtime bundle refusal is INCOMPLETE before Docker starts', async t => {
+test('copy budget: job-scan runtime bundle refusal is INCOMPLETE before Docker starts', { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t), root = path.join(f.directory, 'target'), file = path.join(f.directory, 'profile.json'); await promises.mkdir(root);
   await promises.writeFile(file, JSON.stringify({ ...jobProfile(f.source), maxCopyBytes: 1 }));
   const result = await invoke(['job-scan', root, '--job-profile', file, '--json']);
@@ -179,7 +179,7 @@ test('copy budget: a replaced process owner keeps tool_digest_mismatch', { skip:
     { path: f.source, sha256: hash('1234'), version: '1' }, 1000, Buffer.from('1234'))), { code: 'tool_digest_mismatch' });
 });
 
-test('copy budget: a replaced runtime asset keeps the integrity ERROR envelope', async t => {
+test('copy budget: a replaced runtime asset keeps the integrity ERROR envelope', { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t), { CopyBudget } = await api(), root = path.join(f.directory, 'target'), file = path.join(f.directory, 'profile.json');
   const replacement = path.join(f.directory, 'replacement');
   await promises.mkdir(root); await promises.writeFile(replacement, Buffer.alloc(1048576));

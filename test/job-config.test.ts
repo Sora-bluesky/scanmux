@@ -53,7 +53,7 @@ test('job profile rejects unknown authority, nonlocal endpoints, unbounded/round
   for (const change of changes) { const input = structuredClone(original); change(input); assert.throws(() => parseJobProfile(input)); }
 });
 
-test('job profile validates exact regular pinned host files and refuses target-owned/invalid UTF8/oversized profiles', async () => {
+test('job profile validates exact regular pinned host files and refuses target-owned/invalid UTF8/oversized profiles', { skip: process.platform === 'darwin' }, async () => {
   const f = await fixture();
   try {
     const source = path.join(f.directory, 'profile.json'), input = profile(f.executable);
@@ -70,7 +70,7 @@ test('job profile validates exact regular pinned host files and refuses target-o
   } finally { await f.close(); }
 });
 
-test('database admission selects only six literal regular files; parent directories and sibling credentials are absent', async () => {
+test('database admission selects only six literal regular files; parent directories and sibling credentials are absent', { skip: process.platform === 'darwin' }, async () => {
   const f = await fixture();
   try {
     const input = profile(f.executable); input.osvDatabase = f.directory;

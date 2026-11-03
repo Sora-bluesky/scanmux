@@ -113,7 +113,8 @@ test('with a global core.autocrlf=true, the documented checkouts leave working f
         const heading = /^\[([a-z]+)(?: "[^"]+")?\]$/i.exec(line);
         if (heading) { section = heading[1].toLowerCase(); continue; }
         const key = (/^([a-z]+)\s*=/i.exec(line) ?? [])[1]?.toLowerCase();
-        assert.ok(allowedConfig[section]?.includes(key), `${lang}: .git/config key ${section}.${key} is outside the job-scan allowlist`);
+        assert.ok(allowedConfig[section]?.includes(key) || process.platform === 'darwin' && section === 'core' && key === 'precomposeunicode',
+          `${lang}: .git/config key ${section}.${key} is outside the job-scan allowlist`);
       }
       for (const commit of [result.base, result.head]) {
         const checkout = spawnSync('git', [...options, '-C', out, 'checkout', '-q', commit], { encoding: 'utf8', windowsHide: true, env });

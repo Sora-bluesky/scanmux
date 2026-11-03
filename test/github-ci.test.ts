@@ -134,22 +134,32 @@ test('workflows: step names match the verifier tables, actions are SHA pinned an
   assert.match(await readFile(testsWorkflowPath, 'utf8'), /permissions:\n {2}contents: read\n\n/);
 });
 
-test('pull requests run the suite on Linux with the same pinned actions and Node as Windows', async () => {
+test('pull requests run the suite on Linux and macOS with the same pinned actions and Node as Windows', async () => {
   const text = await readFile(testsWorkflowPath, 'utf8');
-  const [windows, linux] = text.split('\n  checks-linux:\n');
-  assert.ok(linux); assert.match(windows, /^on:\n {2}pull_request:\n/m);
-  assert.match(linux, /^ {4}runs-on: ubuntu-24\.04$/m);
-  assert.match(linux, /^ {4}timeout-minutes: 25$/m);
-  for (const action of ['checkout', 'setup-node']) {
-    const pattern = new RegExp('uses: (actions/' + action + '@[0-9a-f]{40})');
-    assert.equal(linux.match(pattern)?.[1], windows.match(pattern)?.[1]);
-  }
-  for (const options of ['persist-credentials: false\n          fetch-depth: 0', 'node-version: 24.22.1\n          package-manager-cache: false']) {
-    assert.ok(linux.includes(options)); assert.ok(windows.includes(options));
+  const [header, windows, integration, linux, macos] = text.split(/\n(?= {2}[a-z-]+:\n {4}name: )/);
+  assert.match(header, /^on:\n {2}pull_request:\n/m);
+  assert.deepEqual([windows, integration, linux, macos].map(job => job.match(/^ {2}([a-z-]+):/)?.[1]),
+    ['checks', 'linux-job-integration', 'checks-linux', 'checks-macos']);
+  assert.equal(text.split(/\n(?= {2}[a-z-]+:\n {4}name: )/).length, 5);
+  for (const [job, runner] of [[linux, 'ubuntu-24.04'], [macos, 'macos-15']]) {
+    assert.ok(job.includes('    runs-on: ' + runner + '\n'));
+    assert.match(job, /^ {4}timeout-minutes: 25$/m);
+    for (const action of ['checkout', 'setup-node']) {
+      const pattern = new RegExp('uses: (actions/' + action + '@[0-9a-f]{40})');
+      assert.equal(job.match(pattern)?.[1], windows.match(pattern)?.[1]);
+    }
+    for (const options of ['persist-credentials: false\n          fetch-depth: 0', 'node-version: 24.22.1\n          package-manager-cache: false']) {
+      assert.ok(job.includes(options)); assert.ok(windows.includes(options));
+    }
+    assert.deepEqual([...job.matchAll(/^ {6}- name: (.+)$/gm)].map(match => match[1]),
+      ['Check out head', 'Set up Node', 'Install dependencies', 'Typecheck', 'Test']);
+    assert.doesNotMatch(job, /permissions:|ci-produce|SCANMUX_REAL_CONFIG|^ *if:/m);
   }
   assert.deepEqual([...linux.matchAll(/^ {8}run: (.+)$/gm)].map(match => match[1]),
     ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', 'npm test']);
-  assert.doesNotMatch(linux, /permissions:|ci-produce|SCANMUX_REAL_CONFIG/);
+  assert.deepEqual([...macos.matchAll(/^ {8}run: (.+)$/gm)].map(match => match[1]),
+    ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', '|']);
+  assert.ok(macos.endsWith(`        run: |\n          export TMPDIR="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.env.TMPDIR))')"\n          npm test\n`));
 });
 
 test('release workflow dry run attests the dispatched commit without tags or release access', async () => {

@@ -25,7 +25,8 @@ submodule、symlink、LFS pointer、NULを含むバイナリはsnapshotから除
 Windowsと固定したLinuxコンテナでオフライン静的検査を実証しました。
 Linuxの確認対象は通常入力、DB欠落、合成秘密です。
 対象は変わらず、検査区間の通信counter差分は毎回0でした。
-本番AI runnerの有効化やmacOS対応を実証したものではありません。
+テストスイートはCIでmacOS上でも実行しますが、ジョブコマンドと本番AI runnerは引き続き非対応です。
+macOSの`/tmp`や`/var`など、祖先にシンボリックリンクがある対象は`linked_path`で拒否します。
 Windowsでは実行ごとの非公開アクセス制御リスト（ACL）を使います。
 そのディレクトリを作成・利用できない環境では失敗として扱い、ACLを緩めて回避しません。
 

@@ -102,7 +102,11 @@ async function executeUncontained(tool: Tool, args: string[], options: ExecuteOp
 export const executeDirect = (tool: Tool, args: string[], options: ExecuteOptions): Promise<ProcessResult> => observed(tool, args, options, executeUncontained);
 async function groupGone(pid: number, deadline: number): Promise<boolean> {
   for (;;) {
-    try { process.kill(-pid, 0); } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+    try { process.kill(-pid, 0); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') return true;
+      if (code !== 'EPERM') return false;
+    }
     if (performance.now() >= deadline) return false;
     await delay(groupPollMs);
   }
@@ -133,7 +137,10 @@ function spawnDirect(tool: Tool, args: string[], options: ExecuteOptions): Promi
       if (process.platform === 'win32') { child.kill(); stoppedTree = Promise.resolve(false); return; }
       const deadline = performance.now() + stopBudgetCeilingMs;
       try { process.kill(-pid, 'SIGKILL'); stoppedTree = groupGone(pid, deadline); }
-      catch (error) { stoppedTree = Promise.resolve((error as NodeJS.ErrnoException).code === 'ESRCH'); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        stoppedTree = code === 'EPERM' ? groupGone(pid, deadline) : Promise.resolve(code === 'ESRCH');
+      }
     };
     const receive = (buffer: Buffer, keep: boolean) => {
       size += buffer.length;

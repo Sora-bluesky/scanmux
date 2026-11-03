@@ -53,7 +53,7 @@ The following are outside this scope:
 | Item | Boundary |
 |---|---|
 | Real Linux host measurement and stopping | This resource workflow has only been verified on Windows with Docker Desktop's Linux engine. |
-| macOS support | Host resource measurement and termination have not been verified there. |
+| macOS support | The test suite runs on macOS in CI. Job commands and the AI runner remain unsupported. Targets under a symlinked ancestor, such as macOS `/tmp` or `/var`, are refused with `linked_path`. |
 | Physical disk quota | ScanMux estimates registered job data and stops on excess. Sampling can miss growth. ScanMux does not change OS settings. |
 | Publisher checks without upstream evidence | A v2 policy can verify supplied OSV-Scanner Sigstore/SLSA evidence offline through `gh`. Gitleaks 8.30.1 publishes no signature evidence. Git for Windows, container components, images and the asset manifest cannot be publisher-verified offline. `gh` is pinned, not self-verified. Local SHA-256/version pins alone do not verify a publisher. |
 | Guaranteed effective Daybreak Blue | Blue is an optional request. Requested and effective programs are recorded separately. Effective `standard` is accepted as an AI check; this alone does not establish completion. |

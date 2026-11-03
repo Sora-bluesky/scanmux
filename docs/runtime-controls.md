@@ -258,7 +258,8 @@ Same-user concurrent host mutation is unsupported.
 
 The container runs with no network, a readonly root/source/assets, UID 1000, all capabilities dropped and no-new-privileges.
 Unsupported kernel, tracing, image or isolation conditions stop before target processing, with no permission retry.
-macOS and AI/URL/Web/batch/resume jobs are outside this command's supported scope.
+The test suite runs on macOS in CI, but job commands and the AI runner remain unsupported there; AI/URL/Web/batch/resume jobs are outside this command's supported scope.
+Targets under a symlinked ancestor, such as macOS `/tmp` or `/var`, are refused with `linked_path`.
 `--job-profile` on an older command is rejected.
 
 ## Limit the Windows coordinator and its descendants
@@ -423,7 +424,9 @@ Runtime-policy and provenance refusals keep their own codes, even when the admis
 Overrunning steps include reading an entire tool image for verification, reading and checking saved records after the owner, and one record write.
 The interval between killing the owner and its exit can also overrun the bound.
 The limits do not form an aggregate host/Linux budget or complete the job-resource requirement.
-Same-user concurrent mutation, macOS and AI/URL/Web/batch/resume jobs remain unsupported by this command.
+Same-user concurrent mutation and AI/URL/Web/batch/resume jobs remain unsupported by this command.
+The test suite runs on macOS in CI, but job commands and the AI runner remain unsupported there.
+Targets under a symlinked ancestor, such as macOS `/tmp` or `/var`, are refused with `linked_path`.
 
 ## Linux job integration in CI
 
