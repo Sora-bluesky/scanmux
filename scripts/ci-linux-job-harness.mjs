@@ -23,6 +23,7 @@ const criteria = [
   ...fields.map(f => `STOP closure.${f}`),
   'STOP independent label listing empty', 'STOP independent daemon answers',
   'STOP scanner seen before interrupt', 'STOP supported interrupt recorded', 'STOP scanner gone',
+  'STOP no job_closure_unverified',
   'HARNESS all CLI children exited normally', 'HARNESS no owned containers remain',
 ];
 const verdicts = new Map(criteria.map(name => [name, { pass: false, detail: 'not reached' }]));
@@ -237,6 +238,7 @@ async function scenario(name, profile, fixture) {
     set('CONTROL gitleaks completed', job !== null && !reasons.includes('required_gitleaks_incomplete'), JSON.stringify(reasons));
   } else {
     set('STOP scanner seen before interrupt', observedScanner !== null && interrupt?.sent === true);
+    set('STOP no job_closure_unverified', job !== null && !reasons.includes('job_closure_unverified'), JSON.stringify(reasons));
     set('STOP supported interrupt recorded', interrupt?.sent === true && job?.resources.stop?.kind === 'cancelled'
       && exit.signal === null && exit.code === job?.exitCode, 'SIGTERM; job.resources.stop.kind must be cancelled');
   }

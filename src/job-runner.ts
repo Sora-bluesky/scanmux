@@ -297,7 +297,8 @@ async function runOwnedJob(target: string, profilePath: string, signal: AbortSig
     if (id === null) return;
     const observed = await inspect();
     if (observed.running) {
-      successful(await docker.run(['kill', '--signal', 'KILL', id], cleanupDeadline()));
+      try { successful(await docker.run(['kill', '--signal', 'KILL', id], cleanupDeadline())); }
+      catch (error) { if ((await inspect()).running) throw error; return; }
       successful(await docker.run(['wait', id], cleanupDeadline()));
     }
   }
