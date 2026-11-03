@@ -45,7 +45,7 @@ image_id=$(docker image inspect --format '{{.Id}}' "$image")
 [[ $image_id =~ ^sha256:[a-f0-9]{64}$ ]]
 # Use working-tree bytes so local runs include uncommitted changes.
 tar --exclude=node_modules -cf "$run/source.tar" -C "$repository" -- \
-  bin src internal scripts test package.json package-lock.json .github/scanmux/linux-job-pins.json
+  LICENSE NOTICE README.md README.ja.md bin src internal scripts test package.json package-lock.json \n  .github/scanmux/linux-job-pins.json
 docker create --pull=never --name "$name" --label "scanmux.ci-linux-job=$id" \
   --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
   --mount "type=bind,source=$work,target=$work" \

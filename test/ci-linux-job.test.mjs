@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { jobRuntimeFiles } from '../src/job-runner.ts';
 import { nativeSuitePassed } from '../scripts/ci-linux-job-native.mjs';
 
 const summary = values => Object.entries({ tests: 18, pass: 18, fail: 0, cancelled: 0, skipped: 0, todo: 0, ...values })
@@ -39,4 +40,12 @@ test('Linux job integration has isolated read-only permissions and existing pinn
   // A job-level env cannot read the runner context; GitHub rejects the whole workflow file.
   assert.doesNotMatch(job, /^ {4}env:\n/m);
   assert.match(job, /path: \$\{\{ runner\.temp \}\}\/scanmux-linux-job\/evidence\/\n/);
+});
+
+test('Linux job source archive holds every job runtime file', async () => {
+  const script = await readFile('scripts/ci-linux-job.sh', 'utf8');
+  const archived = script.match(/tar --exclude=node_modules -cf "\$run\/source\.tar" -C "\$repository" -- \\n([^\n]*) \\n([^\n]*)\n/);
+  assert.ok(archived);
+  const roots = new Set(`${archived[1]} ${archived[2]}`.trim().split(/\s+/));
+  for (const file of jobRuntimeFiles) assert.ok(roots.has(file.split('/')[0]), file);
 });
