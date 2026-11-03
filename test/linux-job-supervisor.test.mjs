@@ -274,3 +274,30 @@ for (const name of ['controller-disappearance', 'disk-work', 'disk-tmp', 'disk-s
     await runNativeSupervisorFixture(profileInput, name);
   });
 }
+
+// Deterministic kernel ordering against the actual Tracer, including on Windows.
+for (const [scenario, arrivals, cases] of [
+  ['birth-exit', ['before', 'after-birth', 'after-exit', 'after-terminal', 'never'], 12],
+  ['exit-first', ['before', 'after-exit', 'after-terminal', 'never'], 6],
+  ['terminal-first', ['before', 'after-terminal', 'never'], 6],
+  ...['birth-barrier', 'birth-during-observe', 'exit-esrch', 'observed-order', 'closure-needs-terminal'].map(name => [name, ['never'], 1]),
+  ['creator-during-write', ['after-birth'], 1],
+  ['exec-migration', ['after-terminal'], 3],
+  ['anomalies', ['never'], 16],
+  ['birth-reuse', ['after-birth', 'after-terminal', 'never'], 3],
+  ['creator-reuse', ['before'], 3],
+  ['closure-reuse', ['never'], 3],
+  ['exec-reuse', ['before', 'after-birth', 'after-terminal', 'never'], 3],
+  ['unreported-child', ['never'], 2],
+  ['creator-liveness', ['never'], 15],
+  ['write-exit', ['before', 'after-exit', 'after-terminal', 'never'], 4],
+  ['write-terminal', ['before', 'after-terminal', 'never'], 4],
+  ['async-write-exit', ['before', 'after-exit', 'after-terminal', 'never'], 4],
+  ['async-write-terminal', ['before', 'after-terminal', 'never'], 4],
+  ['write-controls', ['never'], 39],
+]) for (const arrival of arrivals) test(`supervisor tracer: ${scenario}, creator ${arrival}`, () => {
+  const result = spawnSync(process.platform === 'win32' ? 'python' : 'python3',
+    ['-I', '-B', 'test/fixtures/linux-job-tracer.py', scenario, arrival], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.deepEqual(JSON.parse(result.stdout), { scenario, arrival, cases });
+});
