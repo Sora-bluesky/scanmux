@@ -425,6 +425,32 @@ The interval between killing the owner and its exit can also overrun the bound.
 The limits do not form an aggregate host/Linux budget or complete the job-resource requirement.
 Same-user concurrent mutation, macOS and AI/URL/Web/batch/resume jobs remain unsupported by this command.
 
+## Linux job integration in CI
+
+Every pull request runs `linux-job-integration` on `ubuntu-24.04`. It runs the
+native supervisor suite with a generated `SCANMUX_NATIVE_JOB_PROFILE`; failures,
+skipped tests and an empty suite fail the job. With pinned Linux Docker and
+Gitleaks tools, it also runs the real `job-scan` CLI against a 128 MiB text fixture:
+LIMIT requires the measured disk limit and INCOMPLETE/3, CONTROL requires a
+completed scan without that limit, and STOP interrupts an observed Gitleaks scan.
+CONTROL also requires Gitleaks to complete.
+LIMIT and STOP require the recorded closure fields, independent container absence
+and daemon health. STOP does not require absence of `job_closure_unverified`, a
+known intermittent issue; its existing closure checks still apply.
+
+The limit run detects snapshot growth. These scenarios do not show a scanner
+killed mid-write, and cover one Linux host type. Harness output and the criteria
+matrix are uploaded as an artifact; credentials and environment dumps are excluded.
+The source and private temporary directories are outside the uploaded evidence.
+
+Run `bash scripts/ci-linux-job.sh` on a Linux Docker host. `SCANMUX_LINUX_JOB_WORK`
+selects a fresh dedicated executable bind-mount path for each invocation, defaulting to
+`$RUNNER_TEMP/scanmux-linux-job`. For Docker Desktop, use `/opt/scanmux-linux-job` on the
+daemon's Linux host (with a separate subdirectory per run) because its `/tmp` is mounted `noexec`. Preparation needs
+network access and the reviewed image digest in `.github/scanmux/linux-job-pins.json`;
+the scan containers have no network. The harness drops to UID 1000 and uses only
+the Docker socket's group. Evidence and run directories remain for inspection.
+
 ## Related docs
 
 - [Get started](getting-started.md)

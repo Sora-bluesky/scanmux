@@ -1,0 +1,16 @@
+{
+  "schema": "scanmux.ci-linux-job-pins/v1",
+  "image": "node:24.22.1-bookworm@sha256:d862bb5d082c5ae0210ac07e8c0344cb8cf7bef6d78e9b8c50c179da923108ea",
+  "docker": {
+    "version": "29.9.2",
+    "url": "https://download.docker.com/linux/static/stable/x86_64/docker-29.9.2.tgz",
+    "archiveSha256": "9ac225999fd5e863f7694c728ef23d480616b1e5639328fa309befd4243d69eb",
+    "exeSha256": "6c71cfe71faff949a602946a4df4799b563232e79d0b8b6fd343d0ef081c9621"
+  },
+  "gitleaks": {
+    "version": "8.30.1",
+    "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz",
+    "archiveSha256": "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
+    "exeSha256": "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
+  }
+}
