@@ -19,7 +19,7 @@ const criteria = [
   ...fields.map(f => `LIMIT closure.${f}`),
   'LIMIT independent label listing empty', 'LIMIT independent daemon answers',
   'LIMIT container started before limit', 'LIMIT copy budget did not win',
-  'CONTROL valid completed job', 'CONTROL no measured reason',
+  'CONTROL valid completed job', 'CONTROL no measured reason', 'CONTROL gitleaks completed',
   ...fields.map(f => `STOP closure.${f}`),
   'STOP independent label listing empty', 'STOP independent daemon answers',
   'STOP scanner seen before interrupt', 'STOP supported interrupt recorded', 'STOP scanner gone',
@@ -234,6 +234,7 @@ async function scenario(name, profile, fixture) {
       && job.knownFailures.length === 0 && job.resources.stop === null && job.analysis?.kind === 'report'
       && exit.code === job.exitCode && exit.signal === null && job.gate !== 'ERROR', 'prevents vacuous success on admission failure');
     set('CONTROL no measured reason', job !== null && !reasons.includes('job_disk_measured_limit'), JSON.stringify(reasons));
+    set('CONTROL gitleaks completed', job !== null && !reasons.includes('required_gitleaks_incomplete'), JSON.stringify(reasons));
   } else {
     set('STOP scanner seen before interrupt', observedScanner !== null && interrupt?.sent === true);
     set('STOP supported interrupt recorded', interrupt?.sent === true && job?.resources.stop?.kind === 'cancelled'

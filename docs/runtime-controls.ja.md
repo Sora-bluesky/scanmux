@@ -436,6 +436,7 @@ v1のホスト保存出力は論理的な容量計上だけです。
 生成した`SCANMUX_NATIVE_JOB_PROFILE`でnative supervisorのテストを実行し、失敗・スキップ・テスト件数ゼロを不合格にします。
 固定したLinux用DockerとGitleaksを使い、128 MiBのテキストを対象に実際の`job-scan`も実行します。
 LIMITは実測ディスク上限とINCOMPLETE/3、CONTROLはその上限に達しない検査完了、STOPは実行中のGitleaksを観測してからの中断を確認します。
+CONTROLではGitleaksの完了も要求します。
 LIMITとSTOPでは、記録された終了確認項目、独立したコンテナ消失確認、Docker daemonの応答を要求します。
 STOPでは、既知の断続的な問題である`job_closure_unverified`がないことを要求せず、既存の終了確認項目を維持します。
 

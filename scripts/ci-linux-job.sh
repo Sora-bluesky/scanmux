@@ -26,6 +26,9 @@ finish() {
       status=1
     fi
   fi
+  if [[ $status == 0 ]]; then
+    node "$repository/scripts/ci-linux-job-verdict.mjs" "$work/evidence/criteria.json" || status=1
+  fi
   printf '{"exitCode":%d}\n' "$status" > "$work/evidence/launcher-exit.json"
   exit "$status"
 }

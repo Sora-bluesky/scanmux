@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { jobRuntimeFiles } from '../src/job-runner.ts';
 import { nativeSuitePassed } from '../scripts/ci-linux-job-native.mjs';
+import { criteriaPassed } from '../scripts/ci-linux-job-verdict.mjs';
 
 const summary = values => Object.entries({ tests: 18, pass: 18, fail: 0, cancelled: 0, skipped: 0, todo: 0, ...values })
   .map(([field, count]) => `# ${field} ${count}\n`).join('');
@@ -20,6 +21,19 @@ test('native suite gate requires complete, nonempty success without skips or can
     { stdout: Buffer.from(summary({}) + summary({})) }]) {
     assert.equal(nativeSuitePassed(result({}, overrides)), false);
   }
+});
+
+test('criteria verdict requires all six prefixes and strictly passing objects', () => {
+  const results = ['SETUP ', 'SOURCE ', 'NATIVE ', 'LIMIT ', 'CONTROL ', 'STOP ']
+    .map(prefix => ({ criterion: prefix + 'completed', pass: true }));
+  assert.equal(criteriaPassed(results), true);
+  assert.equal(criteriaPassed([]), false);
+  assert.equal(criteriaPassed(results.slice(1)), false);
+  for (const pass of [false, 'true']) {
+    assert.equal(criteriaPassed(results.map((result, index) => index === 0 ? { ...result, pass } : result)), false);
+  }
+  for (const value of [null, {}, 'true', true]) assert.equal(criteriaPassed(value), false);
+  for (const value of [null, [], true]) assert.equal(criteriaPassed([...results, value]), false);
 });
 
 test('Linux job integration has isolated read-only permissions and existing pinned actions', async () => {
