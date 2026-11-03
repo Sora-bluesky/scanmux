@@ -44,7 +44,7 @@ test('Linux job integration has isolated read-only permissions and existing pinn
 
 test('Linux job source archive holds every job runtime file', async () => {
   const script = await readFile('scripts/ci-linux-job.sh', 'utf8');
-  const archived = script.match(/tar --exclude=node_modules -cf "\$run\/source\.tar" -C "\$repository" -- \\n([^\n]*) \\n([^\n]*)\n/);
+  const archived = script.match(/tar --exclude=node_modules -cf "\$run\/source\.tar" -C "\$repository" -- \\\n([^\n]*) \\\n([^\n]*)\n/);
   assert.ok(archived);
   const roots = new Set(`${archived[1]} ${archived[2]}`.trim().split(/\s+/));
   for (const file of jobRuntimeFiles) assert.ok(roots.has(file.split('/')[0]), file);
