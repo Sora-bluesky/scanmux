@@ -476,7 +476,7 @@ class Pump:
 class Tracer:
     def __init__(self, pump):
         self.pump = pump
-        self.tasks, self.orphans = {}, {}
+        self.tasks, self.retired = {}, set()
         self.root = self.root_exit = None
         self.stores = {}
         self.counts = {key: 0 for key in ['fork', 'vfork', 'clone', 'exec', 'exitEvent', 'signal', 'seccomp', 'interrupt', 'allStop', 'writes', 'execMigrations']}
@@ -511,10 +511,18 @@ class Tracer:
     def mount_id(descriptor):
         return int(next(line.split()[1] for line in read_small('/proc/self/fdinfo/' + str(descriptor)).splitlines() if line.startswith('mnt_id:')))
 
-    def add(self, tid):
-        require(tid not in self.tasks)
+    def add(self, tid, orphan=False):
+        # A late creator confirms a live orphan or its already reaped identity.
+        if tid in self.tasks:
+            require(not orphan and self.tasks[tid]['orphan'])
+            self.tasks[tid]['orphan'] = False
+            return
+        if tid in self.retired:
+            require(not orphan)
+            self.retired.remove(tid)
+            return
         self.tasks[tid] = {'stopped': False, 'new': True, 'interrupting': False, 'signal': 0, 'entry': None,
-                           'exiting': False, 'awaitStatus': False, 'vforkChild': None, 'lastStop': 'new'}
+                           'exiting': False, 'awaitStatus': False, 'vforkChild': None, 'lastStop': 'new', 'orphan': orphan}
 
     def resume(self, tid, op=None):
         task = self.tasks[tid]
@@ -553,11 +561,16 @@ class Tracer:
             # exec may replace an already retired leader identity with an owned
             # nonleader; the actual EXEC/GETEVENTMSG is the migration evidence.
             require(event_message(tid) in self.tasks)
-            self.add(tid)
+            orphan = tid in self.retired
+            self.retired.discard(tid)
+            self.add(tid, orphan=orphan)
         if tid not in self.tasks:
-            require(os.WIFSTOPPED(value) and tid not in self.orphans)
-            self.orphans[tid] = value
-            return
+            # A newborn's stop or death can precede (or outlive) its creator event.
+            # Own it immediately so barriers, writes and closure use the same tasks.
+            require(os.WIFEXITED(value) or os.WIFSIGNALED(value) or os.WIFSTOPPED(value)
+                    and (value >> 16 == 128 and os.WSTOPSIG(value) in [signal.SIGTRAP, signal.SIGSTOP]
+                         or value >> 16 == 6 and os.WSTOPSIG(value) == signal.SIGTRAP))
+            self.add(tid, orphan=True)
         task = self.tasks[tid]
         if os.WIFEXITED(value) or os.WIFSIGNALED(value):
             if tid == self.root:
@@ -566,10 +579,14 @@ class Tracer:
             lost = task['entry'] is not None and task['entry']['phase'] in ['held', 'async']
             self.release_entry(task)
             del self.tasks[tid]
+            if task['orphan']:
+                self.retired.add(tid)
             require(not lost)
             return
-        require(os.WIFSTOPPED(value) and not task['stopped'])
+        require(os.WIFSTOPPED(value))
         sig, event = os.WSTOPSIG(value), value >> 16
+        # Group exit can supersede an already reported birth/interrupt stop.
+        require(not task['stopped'] or event == 6 and sig == signal.SIGTRAP)
         self.last_event = {'tid': tid, 'signal': sig, 'event': event, 'previousStop': task['lastStop'],
                            'new': task['new'], 'interrupting': task['interrupting'],
                            'entryPhase': task['entry']['phase'] if task['entry'] is not None else None}
@@ -584,8 +601,6 @@ class Tracer:
             if event == 2:
                 task['vforkChild'] = new
             self.add(new)
-            if new in self.orphans:
-                self.ingest(new, self.orphans.pop(new))
         elif event == 4:
             self.counts['exec'] += 1
             old = event_message(tid)
@@ -594,6 +609,8 @@ class Tracer:
                 previous = self.tasks.pop(old, None)
                 require(previous is not None)
                 self.release_entry(previous)
+                if previous['orphan']:
+                    self.retired.add(old)
                 self.counts['execMigrations'] += 1
             task.update(lastStop='exec_event', exiting=False, new=False,
                         awaitStatus=False, vforkChild=None, signal=0)
@@ -601,6 +618,7 @@ class Tracer:
             require(task['vforkChild'] is not None)
             task['lastStop'], task['vforkChild'] = 'vfork_done', None
         elif event == 6:
+            require(sig == signal.SIGTRAP and not task['exiting'])
             task['lastStop'], task['exiting'] = 'exit_event', True
             self.counts['exitEvent'] += 1
             lost = task['entry'] is not None and task['entry']['phase'] in ['held', 'async']
@@ -671,7 +689,7 @@ class Tracer:
                             raise
                         task['awaitStatus'] = True
         interrupt_running()
-        while not all(task['stopped'] or task['exiting'] or task['vforkChild'] is not None for task in self.tasks.values()) or self.orphans:
+        while not all(task['stopped'] or task['exiting'] or task['vforkChild'] is not None for task in self.tasks.values()):
             self.ingest(*self.wait())
             interrupt_running()
         self.counts['allStop'] += 1
@@ -814,7 +832,7 @@ class Tracer:
         os.close(gate_write)
         while self.tasks:
             self.step()
-        require(not self.orphans and self.root_exit is not None)
+        require(self.root_exit is not None)
         return startup
 
     def kill_reap(self):
@@ -844,10 +862,9 @@ class Tracer:
                 task = self.tasks.pop(tid, None)
                 if task is not None:
                     self.release_entry(task)
-                self.orphans.pop(tid, None)
             else:
                 raise Invalid()
-        require(not self.tasks and not self.orphans and [name for name in os.listdir('/proc') if name.isdecimal()] == ['1'])
+        require(not self.tasks and [name for name in os.listdir('/proc') if name.isdecimal()] == ['1'])
 
     def close(self):
         for store in self.stores.values():
