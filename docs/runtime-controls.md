@@ -435,8 +435,7 @@ LIMIT requires the measured disk limit and INCOMPLETE/3, CONTROL requires a
 completed scan without that limit, and STOP interrupts an observed Gitleaks scan.
 CONTROL also requires Gitleaks to complete.
 LIMIT and STOP require the recorded closure fields, independent container absence
-and daemon health. STOP does not require absence of `job_closure_unverified`, a
-known intermittent issue; its existing closure checks still apply.
+and daemon health. STOP also requires absence of `job_closure_unverified`.
 
 The limit run detects snapshot growth. These scenarios do not show a scanner
 killed mid-write, and cover one Linux host type. Harness output and the criteria

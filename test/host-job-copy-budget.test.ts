@@ -39,6 +39,8 @@ process.env.TEMP = temporary; process.env.TMP = temporary; process.env.TMPDIR = 
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n');
 let ownerPath = '', dockerPath = '', ghPath = '', database = '', ownerVersion = '1.1.0', workerExit = 0;
 let stage = 'outer', omitRemainder = false;
+let terminationScenario: 'exited' | 'running' | 'inspect-failed' | 'invalid' | 'killed' | 'wait-failed' | 'kill-timeout' | 'wait-timeout' | 'cleanup' | undefined;
+let terminationController: AbortController | undefined, containerRunning = false, killCalls = 0, waitCalls = 0, inspectAfterKill = false;
 let diskScenario: 'host' | 'container' | 'sum' | 'under' | 'unmeasurable' | undefined;
 let bootstrap: (Record<string, unknown> & { expected: ExpectedJobPlan }) | undefined;
 let ownerArgs: string[] = [], ownerError: unknown, workerArgs: string[] = [];
@@ -55,6 +57,10 @@ function child() {
 function reply(value: unknown, code = 0) {
   const result = child(); result.stdin.resume();
   setImmediate(() => { result.stdout.write(typeof value === 'string' ? value : JSON.stringify(value)); result.close(code); }); return result;
+}
+function unresponsive() {
+  const result = child(); result.stdin.resume();
+  result.kill = () => { result.close(1); return true; }; return result;
 }
 async function worker(intent: HostJobIntent, sha: string, extra: string[]) {
   const savedArgv = process.argv, savedExit = process.exitCode;
@@ -114,6 +120,7 @@ function attached() {
       if (diskScenario === 'unmeasurable') hostDisk?.register(path.join(expected.destination, 'missing'));
       setImmediate(() => send('ready', { sampleNs: '1', boundary }));
     } else if (packet.type === 'start') {
+      if (terminationScenario && terminationScenario !== 'cleanup') { setImmediate(() => terminationController!.abort()); return; }
       const expected = bootstrap!.expected, workspace = path.join(fixture, randomUUID());
       mkdirSync(workspace);
       const { database: _database, ...init } = bootstrap!;
@@ -139,6 +146,9 @@ function attached() {
       sendRecord('plan', encode({ schema: 'scanmux.job-plan/v1', jobId: expected.jobId, profileSha256: expected.profileSha256,
         origin: { root: expected.root, repoId: hash(expected.root) }, mappedRoot: expected.mappedRoot, config: expected.config, configSha256: digest(expected.config),
         limits: expected.limits, image: expected.image, runtime: expected.runtime, destination: expected.destination, requestedComparison: null, plan: typedPlan }));
+    } else if (packet.type === 'stop' && terminationScenario) {
+      send('closed', { boundary, rootTerminal: { exitCode: null, signal: 15 }, allOwnedTasksReaped: true, counts: null,
+        stopReason: packet.reason, controllerCompleted: false, interruption: null }); result.close();
     } else if (packet.type === 'input') {
       const frame = JSON.parse(Buffer.from(packet.data, 'base64').toString('utf8'));
       if (frame.type === 'disk-stop') { diskCause = frame.cause; return; }
@@ -193,8 +203,29 @@ function docker(args: string[]) {
       Mounts: mounts.map(m => ({ Type: 'bind', Source: m.source, Destination: m.target, RW: false })), State: { Running: false, ExitCode: 0, OOMKilled: false } };
     return reply('c'.repeat(64));
   }
-  if (command === 'inspect') return container ? reply([container]) : reply('', 1);
-  if (command === 'start') return attached();
+  if (command === 'inspect') {
+    if (!container) return reply('', 1);
+    const observed = structuredClone(container);
+    if (terminationScenario) observed.State = { Running: containerRunning, ExitCode: containerRunning || terminationScenario === 'cleanup' ? 0 : 137, OOMKilled: false };
+    if (inspectAfterKill) {
+      inspectAfterKill = false;
+      if (terminationScenario === 'inspect-failed') return reply('', 1);
+      if (terminationScenario === 'invalid') observed.Id = 'd'.repeat(64);
+    }
+    return reply([observed]);
+  }
+  if (command === 'start') { containerRunning = !!terminationScenario; return attached(); }
+  if (command === 'kill') {
+    killCalls++;
+    containerRunning = terminationScenario === 'running' && killCalls === 1;
+    if (terminationScenario === 'kill-timeout') return unresponsive();
+    if (killCalls === 1 && !['killed', 'wait-failed', 'wait-timeout'].includes(terminationScenario!)) {
+      inspectAfterKill = true;
+      const result = reply('', 1); result.stderr.write('synthetic kill failure'); return result;
+    }
+    return reply('');
+  }
+  if (command === 'wait') { waitCalls++; return terminationScenario === 'wait-timeout' ? unresponsive() : reply('137\n', terminationScenario === 'wait-failed' ? 1 : 0); }
   if (command === 'rm') { container = undefined; return reply(''); }
   if (command === 'ps') return reply('');
   throw Error('unexpected Docker call: ' + command);
@@ -270,6 +301,36 @@ async function run(limit?: number, retained = false, disk?: typeof diskScenario)
   finally { CopyBudget.prototype.copy = original; }
 }
 const appBytes = async () => (await Promise.all(jobRuntimeFiles.map(file => fs.stat(file)))).reduce((sum, stat) => sum + stat.size, 0);
+
+for (const scenario of ['exited', 'running', 'inspect-failed', 'invalid', 'killed', 'wait-failed', 'kill-timeout', 'wait-timeout', 'cleanup'] as const) {
+  test('job termination: ' + scenario + ' after kill preserves verified closure and cancellation reasons', windowsOnly, async () => {
+    const saved = await fs.readFile(activeOffline), offline = JSON.parse(saved.toString('utf8'));
+    const timedOut = scenario === 'kill-timeout' || scenario === 'wait-timeout';
+    if (timedOut) offline.limits.cleanupTimeoutMs = 100;
+    delete offline.maxCopyBytes; delete offline.maxJobDiskBytes; await fs.writeFile(activeOffline, encode(offline));
+    terminationScenario = scenario; terminationController = new AbortController();
+    containerRunning = false; killCalls = 0; waitCalls = 0; inspectAfterKill = false;
+    bootstrap = undefined; ownerError = undefined; diskScenario = undefined;
+    try {
+      if (timedOut) {
+        await assert.rejects(scanJob(target, activeOffline, terminationController.signal), { code: 'job_metadata_deadline' });
+        assert.equal(ownerError, undefined); assert.equal(killCalls, 1);
+        assert.equal(waitCalls, scenario === 'wait-timeout' ? 1 : 0); return;
+      }
+      const result = await scanJob(target, activeOffline, terminationController.signal);
+      assert.equal(ownerError, undefined);
+      const failed = ['running', 'inspect-failed', 'invalid', 'wait-failed'].includes(scenario);
+      assert.equal(result.job.reasons.includes('job_closure_unverified'), failed, result.json);
+      assert.equal(result.job.knownFailures.includes('job_closure_unverified'), failed, result.json);
+      assert.equal(result.job.reasons.includes('job_cancelled_stop'), !failed && scenario !== 'cleanup', result.json);
+      assert.equal(result.job.closure.containerAbsent, true); assert.equal(result.job.closure.supervisorClosed, true);
+      assert.deepEqual(result.job.closure.terminal, { exitCode: scenario === 'cleanup' ? 0 : 137, oomKilled: false });
+      assert.equal(killCalls, scenario === 'running' ? 2 : 1);
+      assert.equal(waitCalls, ['running', 'killed', 'wait-failed'].includes(scenario) ? 1 : 0);
+      if (scenario === 'cleanup') assert.equal(result.job.gate, 'PASS', result.json);
+    } finally { terminationScenario = undefined; terminationController = undefined; await fs.writeFile(activeOffline, saved); }
+  });
+}
 
 for (const scenario of ['host', 'container', 'sum', 'under', 'unmeasurable'] as const) {
   test('host measured disk: ' + scenario + ' uses engine reasons with unchanged record schemas', windowsOnly, async () => {

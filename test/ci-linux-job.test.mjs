@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { jobRuntimeFiles } from '../src/job-runner.ts';
 import { nativeSuitePassed } from '../scripts/ci-linux-job-native.mjs';
 import { criteriaPassed } from '../scripts/ci-linux-job-verdict.mjs';
@@ -34,6 +35,22 @@ test('criteria verdict requires all six prefixes and strictly passing objects', 
   }
   for (const value of [null, {}, 'true', true]) assert.equal(criteriaPassed(value), false);
   for (const value of [null, [], true]) assert.equal(criteriaPassed([...results, value]), false);
+});
+
+test('STOP registers and evaluates absence of job_closure_unverified on a valid report', async () => {
+  const harness = await readFile('scripts/ci-linux-job-harness.mjs', 'utf8'), criterion = 'STOP no job_closure_unverified';
+  const declarations = harness.slice(harness.indexOf('const fields ='), harness.indexOf('const verdicts ='));
+  assert.equal(runInNewContext(declarations + 'criteria.includes(' + JSON.stringify(criterion) + ')'), true);
+  const stop = harness.match(/  } else {\n(    set\('STOP scanner seen[\s\S]*?)\n  }\n  if \(name !== 'CONTROL'\)/)?.[1];
+  assert.ok(stop);
+  for (const [job, pass] of [[null, false], [{ reasons: [] }, true],
+    [{ reasons: ['job_cancelled_stop'] }, true], [{ reasons: ['job_closure_unverified'] }, false],
+    [{ reasons: ['job_cancelled_stop', 'job_closure_unverified'] }, false]]) {
+    const verdicts = new Map();
+    runInNewContext(stop, { job, reasons: job?.reasons ?? [], observedScanner: null, interrupt: null, exit: {},
+      set: (name, value) => verdicts.set(name, value) });
+    assert.equal(verdicts.get(criterion), pass);
+  }
 });
 
 test('Linux job integration has isolated read-only permissions and existing pinned actions', async () => {

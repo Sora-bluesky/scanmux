@@ -438,7 +438,7 @@ v1のホスト保存出力は論理的な容量計上だけです。
 LIMITは実測ディスク上限とINCOMPLETE/3、CONTROLはその上限に達しない検査完了、STOPは実行中のGitleaksを観測してからの中断を確認します。
 CONTROLではGitleaksの完了も要求します。
 LIMITとSTOPでは、記録された終了確認項目、独立したコンテナ消失確認、Docker daemonの応答を要求します。
-STOPでは、既知の断続的な問題である`job_closure_unverified`がないことを要求せず、既存の終了確認項目を維持します。
+STOPでは、`job_closure_unverified`がないことも要求します。
 
 LIMITが検出するのはスナップショットの増加です。
 これらのシナリオは、書込み途中のscannerを強制終了できた証拠ではなく、対象も1種類のLinuxホストです。
