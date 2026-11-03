@@ -131,6 +131,34 @@ test('off Windows a process group already gone at SIGKILL counts as stopped', as
   }
 });
 
+for (const atSignal of [false, true]) for (const probe of ['transient', 'denied', 'other'] as const)
+  test('process group permission errors require a later ESRCH: ' + (atSignal ? 'signal ' : 'probe ') + probe, async t => {
+    const workspace = await mkdtemp(path.join(tmpdir(), 'scanmux-group-'));
+    const tool = { path: process.execPath, sha256: hash(await readFile(process.execPath)), version: process.versions.node };
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!, kill = process.kill.bind(process), abort = new AbortController();
+    let now = 0, probes = 0;
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+    t.mock.method(performance, 'now', () => now);
+    process.kill = (pid: number, signal?: string | number) => {
+      if (signal === 'SIGKILL') {
+        kill(-pid);
+        if (atSignal) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+        return true;
+      }
+      assert.equal(signal, 0); assert.ok(pid < 0); probes++; now += 1000;
+      throw Object.assign(new Error('group probe'), { code: probe === 'other' ? 'EIO' : probe === 'transient' && probes > 1 ? 'ESRCH' : 'EPERM' });
+    };
+    try {
+      const result = await executeDirect(tool, ['-e', 'setInterval(()=>{},1000)'], { cwd: workspace, home: workspace, timeoutMs: 10000,
+        maxOutputBytes: 1024, signal: abort.signal, onSpawn: () => abort.abort() });
+      assert.equal(result.reason, probe === 'transient' ? 'cancelled' : 'termination_unverified');
+      assert.equal(probes, probe === 'transient' ? 2 : probe === 'denied' ? 5 : 1);
+    } finally {
+      Object.defineProperty(process, 'platform', platform); process.kill = kill; t.mock.restoreAll();
+      await removeTempDirStrict(workspace, { recursive: true, force: true });
+    }
+  });
+
 test('the direct verifier path never reports a verified stop on Windows', async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), 'scanmux-direct-'));
   test.after(() => removeTempDir(workspace));

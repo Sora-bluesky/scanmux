@@ -123,7 +123,7 @@ async function runController(t, scenario, prior) {
 }
 
 for (const scenario of ['host', 'work', 'tmp', 'shm', 'sum', 'engine-end', 'under', 'unmeasurable', 'absent']) {
-  test('Linux controller measured disk: ' + scenario, { timeout: 25000 }, async t => {
+  test('Linux controller measured disk: ' + scenario, { skip: process.platform === 'darwin', timeout: 25000 }, async t => {
     const { report } = await runController(t, scenario);
     const stopped = !['under', 'absent'].includes(scenario), cause = scenario === 'unmeasurable' ? 'job_disk_observation_unverified' : 'job_disk_measured_limit';
     assert.equal(report.gate, !stopped ? 'PASS' : scenario === 'unmeasurable' ? 'ERROR' : 'INCOMPLETE', JSON.stringify(report.reasons));
@@ -131,7 +131,7 @@ for (const scenario of ['host', 'work', 'tmp', 'shm', 'sum', 'engine-end', 'unde
   });
 }
 
-for (const prior of ['FAIL', 'ERROR']) test('Linux controller measured disk preserves earlier ' + prior, { timeout: 25000 }, async t => {
+for (const prior of ['FAIL', 'ERROR']) test('Linux controller measured disk preserves earlier ' + prior, { skip: process.platform === 'darwin', timeout: 25000 }, async t => {
   const { report } = await runController(t, 'engine-end', prior);
   assert.equal(report.gate, prior, JSON.stringify(report.reasons));
   assert.ok(report.reasons.includes('job_disk_measured_limit'));

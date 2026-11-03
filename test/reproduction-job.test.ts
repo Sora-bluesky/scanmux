@@ -187,7 +187,13 @@ async function fixture(t: import('node:test').TestContext, scenario: Scenario, r
       mode: snapshot ? { kind: 'snapshot', requirement: 'supporting' } : { kind: 'before_after', base, head } }, new AbortController().signal) };
 }
 
-test('synthetic owner: same committed oracle, two fresh removed jobs, immutable source and three validated projections', async t => {
+test('reproduction refuses macOS hosts before reading job inputs', { skip: process.platform !== 'darwin' }, async () => {
+  await assert.rejects(verifyFinding(path.resolve('target'), path.resolve('profile.json'), {
+    reportPath: path.resolve('report.json'), finding: selection, testDirectory: 'tests/repro', mode: { kind: 'snapshot', requirement: 'supporting' },
+  }, new AbortController().signal), { code: 'unsupported_job_host' });
+});
+
+test('synthetic owner: same committed oracle, two fresh removed jobs, immutable source and three validated projections', { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, 'pair'), result = await f.run(), directory = path.dirname(result.files.json);
   const firstReceipt = JSON.parse(await readFile(path.join(directory, 'before', 'reproduction-job.json'), 'utf8'));
   assert.equal(result.verification.kind, 'same_test_no_longer_reproduces', JSON.stringify({ facts: firstReceipt.facts, outcome: firstReceipt.outcome, plan: firstReceipt.plan, observation: firstReceipt.observation })); assert.equal(result.assessment.gate, 'FAIL'); assert.equal(result.assessment.exitCode, 1);
@@ -224,7 +230,7 @@ test('synthetic owner: same committed oracle, two fresh removed jobs, immutable 
 for (const [evidenceState, integrityErrors, sourceGate, gate, code] of [
   ['source_supported', [], 'FAIL', 'FAIL', 1], ['candidate', [], 'REVIEW', 'INCOMPLETE', 3],
   ['source_supported', ['source_integrity_error'], 'ERROR', 'ERROR', 4],
-] as const) test('missing environment preserves verification gate order from ' + sourceGate, async t => {
+] as const) test('missing environment preserves verification gate order from ' + sourceGate, { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, 'missing'), original = structuredClone(f.source);
   original.engines[2].findings[0].evidenceState = evidenceState; original.integrityErrors = [...integrityErrors];
   const judgment = decide(original.plan, original.engines, original.integrityErrors);
@@ -243,7 +249,7 @@ for (const [scenario, snapshot, reason, gate, code] of [
   ['head_missing', false, 'environment_missing', 'INCOMPLETE', 3], ['head_changed', false, 'test_guard_rejected', 'INCOMPLETE', 3],
   ['mutated', true, 'integrity_error', 'ERROR', 4], ['cleanup', true, 'integrity_error', 'ERROR', 4],
   ['binding_changed', true, 'integrity_error', 'ERROR', 4], ['binding_missing', true, 'integrity_error', 'ERROR', 4],
-] as const) test('reproduction CLI cannot pass an unverified PASS source: ' + scenario, async t => {
+] as const) test('reproduction CLI cannot pass an unverified PASS source: ' + scenario, { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, scenario, 1048576, 'medium');
   assert.equal(f.source.gate, 'PASS'); assert.equal(f.source.exitCode, 0);
   const result = await f.cli(snapshot);
@@ -254,13 +260,13 @@ for (const [scenario, snapshot, reason, gate, code] of [
 });
 
 for (const [scenario, snapshot, kind] of [['pair', false, 'same_test_no_longer_reproduces'], ['pair', true, 'reproduced'], ['base_negative', true, 'not_reproduced']] as const)
-  test('reproduction CLI preserves a held PASS result: ' + kind, async t => {
+  test('reproduction CLI preserves a held PASS result: ' + kind, { skip: process.platform === 'darwin' }, async t => {
     const f = await fixture(t, scenario, 1048576, 'medium'), result = await f.cli(snapshot);
     assert.equal(result.record.verification.kind, kind); assert.equal(result.record.assessment.gate, 'PASS'); assert.equal(result.code, 0);
     assert.deepEqual(await readFile(f.reportPath), f.sourceBytes);
   });
 
-for (const mutation of ['added', 'removed', 'mode_changed', 'modified'] as const) test('saved and live head plans refuse a test identity mismatch: ' + mutation, async t => {
+for (const mutation of ['added', 'removed', 'mode_changed', 'modified'] as const) test('saved and live head plans refuse a test identity mismatch: ' + mutation, { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, 'pair'), result = await f.run(), directory = path.dirname(result.files.json), filename = path.join(directory, 'after', 'job-plan.json');
   const plan = JSON.parse(await readFile(filename, 'utf8')) as ReproductionPlan, headPlan = plan.job.plan;
   if (mutation === 'added') headPlan.files.push({ ...headPlan.files[1], path: 'tests/repro/nested/helper.mjs' });
@@ -287,7 +293,7 @@ for (const mutation of ['added', 'removed', 'mode_changed', 'modified'] as const
   assert.deepEqual(await readFile(f.reportPath), f.sourceBytes);
 });
 
-test('separate Git modes constrain an otherwise consistently retagged live test identity', async t => {
+test('separate Git modes constrain an otherwise consistently retagged live test identity', { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, 'pair'), result = await f.run(), directory = path.dirname(result.files.json);
   t.after(() => rm(directory, { recursive: true, force: true }));
   const plan = JSON.parse(await readFile(path.join(directory, 'after', 'job-plan.json'), 'utf8'));
@@ -296,7 +302,7 @@ test('separate Git modes constrain an otherwise consistently retagged live test 
   assert.throws(() => validateReproductionPlan(plan, f.jobs[1].expected!, plan.operation), { code: 'invalid_reproduction_record' });
 });
 
-test('reproduction mode records must exactly cover the planned test directory with regular Git modes', async t => {
+test('reproduction mode records must exactly cover the planned test directory with regular Git modes', { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, 'pair'), result = await f.run(), directory = path.dirname(result.files.json);
   t.after(() => rm(directory, { recursive: true, force: true }));
   const plan = JSON.parse(await readFile(path.join(directory, 'after', 'job-plan.json'), 'utf8'));
@@ -307,7 +313,7 @@ test('reproduction mode records must exactly cover the planned test directory wi
 });
 
 for (const snapshot of [false, true]) for (const mutation of ['finding', 'test_id', 'test_mode', 'observation_digest'] as const)
-  test('saved observations reject metadata inconsistent with their binding digest: ' + (snapshot ? 'snapshot ' : 'pair ') + mutation, async t => {
+  test('saved observations reject metadata inconsistent with their binding digest: ' + (snapshot ? 'snapshot ' : 'pair ') + mutation, { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, 'pair', 1048576, 'critical', true), result = await f.run(snapshot), directory = path.dirname(result.files.json);
   t.after(() => rm(directory, { recursive: true, force: true }));
   const record = JSON.parse(await readFile(result.files.json, 'utf8')), observations = [];
@@ -355,7 +361,7 @@ for (const snapshot of [false, true]) for (const mutation of ['finding', 'test_i
   if (mutation !== 'observation_digest') for (const [index, side] of sides.entries()) assert.deepEqual(await readFile(path.join(directory, side, 'observation.json')), observations[index]);
 });
 
-for (const scenario of ['base_negative', 'still', 'head_missing', 'head_changed', 'failed', 'changed', 'cleanup', 'mutated'] as const) test('synthetic owner rejects an unproven pair: ' + scenario, async t => {
+for (const scenario of ['base_negative', 'still', 'head_missing', 'head_changed', 'failed', 'changed', 'cleanup', 'mutated'] as const) test('synthetic owner rejects an unproven pair: ' + scenario, { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, scenario), result = await f.run(), directory = path.dirname(result.files.json), saved = await readVerification(directory, 65536);
   assert.equal(result.verification.kind, 'not_verified');
   assert.equal(result.assessment.gate, ['cleanup', 'mutated'].includes(scenario) ? 'ERROR' : ['still', 'head_missing', 'head_changed'].includes(scenario) ? 'FAIL' : 'INCOMPLETE');
@@ -365,7 +371,7 @@ for (const scenario of ['base_negative', 'still', 'head_missing', 'head_changed'
   await rm(directory, { recursive: true, force: true });
 });
 
-for (const scenario of ['missing', 'image'] as const) test('synthetic owner: unavailable environment never creates a container or invents a test manifest: ' + scenario, async t => {
+for (const scenario of ['missing', 'image'] as const) test('synthetic owner: unavailable environment never creates a container or invents a test manifest: ' + scenario, { skip: process.platform === 'darwin' }, async t => {
   const f = await fixture(t, scenario, 2 * 65536), result = await f.run(true), directory = path.dirname(result.files.json), saved = await readVerification(directory, 65536);
   assert.equal(result.assessment.gate, 'INCOMPLETE'); assert.equal(result.assessment.exitCode, 3); assert.equal(saved.runtimeEvidence, null);
   assert.deepEqual(saved.testGuard, { kind: 'not_checked', reason: 'environment_missing' }); assert.equal(f.jobs.length, 0);

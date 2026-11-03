@@ -25,7 +25,8 @@ Remaining supported files can be scanned; the exclusions remain incomplete cover
 Windows and a fixed Linux container path have been tested for offline static scanning.
 Linux checks cover normal input, a missing database and a synthetic secret.
 Targets stayed unchanged, and each scan had zero packet-counter change.
-This does not enable the production AI runner or establish macOS support.
+The test suite runs on macOS in CI; job commands and the production AI runner remain unsupported there.
+Targets under a symlinked ancestor, such as macOS `/tmp` or `/var`, are refused with `linked_path`.
 Windows uses a private per-run access control list (ACL).
 If the environment cannot create or access that directory, report failure; do not weaken the ACL.
 
