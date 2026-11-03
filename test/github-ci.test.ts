@@ -153,7 +153,7 @@ test('pull requests run the suite on Linux and macOS with the same pinned action
     }
     assert.deepEqual([...job.matchAll(/^ {6}- name: (.+)$/gm)].map(match => match[1]),
       ['Check out head', 'Set up Node', 'Install dependencies', 'Typecheck', 'Test']);
-    assert.doesNotMatch(job, /permissions:|ci-produce|SCANMUX_REAL_CONFIG|^ {4}if: /m);
+    assert.doesNotMatch(job, /permissions:|ci-produce|SCANMUX_REAL_CONFIG|^ *if:/m);
   }
   assert.deepEqual([...linux.matchAll(/^ {8}run: (.+)$/gm)].map(match => match[1]),
     ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', 'npm test']);
