@@ -52,7 +52,7 @@ The following are outside this scope:
 
 | Item | Boundary |
 |---|---|
-| Real Linux host measurement and stopping | This resource workflow has only been verified on Windows with Docker Desktop's Linux engine. |
+| Real Linux host measurement and stopping | This resource workflow is verified on Windows with Docker Desktop's Linux engine and, in CI, on GitHub-hosted `ubuntu-24.04` (native supervisor suite and large job scans). Other Linux hosts are not verified. |
 | macOS support | The test suite runs on macOS in CI. Job commands and the AI runner remain unsupported. Targets under a symlinked ancestor, such as macOS `/tmp` or `/var`, are refused with `linked_path`. |
 | Physical disk quota | ScanMux estimates registered job data and stops on excess. Sampling can miss growth. ScanMux does not change OS settings. |
 | Publisher checks without upstream evidence | A v2 policy can verify supplied OSV-Scanner Sigstore/SLSA evidence offline through `gh`. ZIP evidence (`sigstore-slsa-archive`) requires both a verified ZIP attestation and an exact member-to-engine SHA-256 match; a ZIP attestation alone never proves the executable. The [Trivy Windows x64 ZIP](docs/trivy.md) can be verified this way. This proves the configured publisher identity and byte relationship, not correctness, freshness or safety. Gitleaks 8.30.1 publishes no signature evidence and is always refused at `publisher`. Git for Windows, container components, images and the asset manifest cannot be publisher-verified offline. `gh` is pinned, not self-verified. Local SHA-256/version pins alone do not verify a publisher. |

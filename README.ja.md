@@ -52,7 +52,7 @@ JVN iPediaは状態の表示だけです。
 
 | 項目 | 対応の限界 |
 |---|---|
-| 実Linuxホストでの計測と停止 | この資源制御を実証したのは、WindowsとDocker DesktopのLinux engineだけです。 |
+| 実Linuxホストでの計測と停止 | この資源制御を実証したのは、WindowsとDocker DesktopのLinux engine、およびCIのGitHub-hosted `ubuntu-24.04`（ネイティブの監視テストと大きなジョブ検査）です。それ以外のLinuxホストは未検証です。 |
 | macOS対応 | テストスイートはCIでmacOS上でも実行します。ジョブコマンドとAI runnerは引き続き非対応です。macOSの`/tmp`や`/var`など、祖先にシンボリックリンクがある対象は`linked_path`で拒否します。 |
 | 物理ディスクquota | 登録したジョブ領域の推定量が上限を超えたら停止します。計測間の増加を見逃す場合があります。OS設定は変更しません。 |
 | 配布元の証拠がない部品の署名・来歴確認 | v2の実行方針では、用意したOSV-ScannerのSigstore/SLSA証拠を`gh`でオフライン検証できます。ZIP証拠（`sigstore-slsa-archive`）では、ZIPの証明の検証と、正確なメンバーとエンジンのSHA-256一致の両方が必要です。ZIPの証明だけでは実行ファイルを証明しません。[Trivy Windows x64のZIP](docs/trivy.ja.md)も、この方法で検証できます。確認するのは設定した配布元の識別情報とバイト列の対応であり、正しさ・鮮度・安全性は示しません。Gitleaks 8.30.1は署名の証拠を公開しておらず、`publisher`では必ず拒否します。Git for Windows・コンテナ内部品・image・資産manifestの配布元はオフライン検証できません。`gh`は固定しますが自己検証しません。ローカルのSHA-256・版の固定だけでは配布元を確認しません。 |
