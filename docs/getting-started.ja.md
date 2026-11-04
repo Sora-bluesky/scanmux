@@ -45,6 +45,18 @@ node bin/scanmux.mjs --help
 
 検証が成功するとエラーなく終了し、最後のコマンドがCLIのヘルプを表示します。
 
+取得したリリースのtarballを、別の導入用ディレクトリへインストールすることもできます。
+
+```sh
+npm install --prefix /absolute/consumer --ignore-scripts --omit=dev --no-audit --no-fund "/absolute/scanmux-<version>.tgz"
+/absolute/consumer/node_modules/.bin/scanmux --version
+/absolute/consumer/node_modules/.bin/scanmux deps /absolute/committed-repository --config /absolute/config.json --json
+```
+
+Windowsでは、その`.bin`ディレクトリの`scanmux.cmd`を呼び出します。先に、後述の固定ツール、オフラインDB、設定を用意してください。
+リリースCIでは実際のtarballを導入し、`--version`と、commit済みnpm fixtureのオフライン依存分析の完了を確認します。
+この検査は、導入後のAI runnerやリリース透明性の検証への対応を実証するものではありません。
+
 ### 2. 取得記録付きのオフラインDBを用意する
 
 ソースの作業環境で、選んだ公式OSV DBを全検査対象の外にある新しい絶対パスへ取得します。

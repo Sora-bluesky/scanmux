@@ -57,15 +57,15 @@ test('runtime and package share one exact file inventory; stray src files and pr
   assert.throws(() => verifyPackagePaths(jobRuntimeFiles.filter(file => file !== 'internal/linux-job-supervisor.py')));
 });
 
-test('the job runtime bundle contains every file in the static import closure of src/cli.ts', async () => {
-  const specifiers = /(?:^|\n)\s*(?:import|export)\b[^;'"]*?\bfrom\s*'(\.{1,2}\/[^']+)'|(?:^|\n)\s*import\s*'(\.{1,2}\/[^']+)'/g;
-  const seen = new Set<string>(), pending = ['src/cli.ts'];
+test('the job runtime bundle contains the static and fixed dynamic import closure of every entrypoint', async () => {
+  const specifiers = /(?:^|\n)\s*(?:import|export)\b[^;'"]*?\bfrom\s*'(\.{1,2}\/[^']+)'|(?:^|\n)\s*import\s*'(\.{1,2}\/[^']+)'|\bimport\('(\.{1,2}\/[^']+)'\)/g;
+  const seen = new Set<string>(), pending = ['bin/scanmux.mjs', 'internal/windows-job-worker.mjs', 'internal/linux-job-controller.mjs'];
   while (pending.length) {
     const file = pending.pop()!;
     if (seen.has(file)) continue;
     seen.add(file);
     for (const match of (await readFile(file, 'utf8')).matchAll(specifiers)) {
-      pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1] ?? match[2])));
+      pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1] ?? match[2] ?? match[3])));
     }
   }
   assert.ok(seen.size > 40 && seen.has('src/dependencies.ts') && seen.has('src/import.ts'), 'closure walk reached the command modules');

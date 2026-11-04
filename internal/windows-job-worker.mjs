@@ -1,10 +1,11 @@
+import '../bin/typescript-bootstrap.mjs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { scanJob } from '../src/job-runner.ts';
-import { jobRuntimeFiles } from '../src/job-runner.ts';
-import { readHostJobIntent, verifyHostJobInputs, cleanupHostContainer } from '../src/host-job.ts';
-import { hostRequire } from '../src/host-job-records.ts';
-import { canonical } from '../src/safety.ts';
+const { scanJob } = await import('../src/job-runner.ts');
+const { jobRuntimeFiles } = await import('../src/job-runner.ts');
+const { readHostJobIntent, verifyHostJobInputs, cleanupHostContainer } = await import('../src/host-job.ts');
+const { hostRequire } = await import('../src/host-job-records.ts');
+const { canonical } = await import('../src/safety.ts');
 
 try {
   const [mode, directory, intentSha256, ...extra] = process.argv.slice(2);

@@ -45,6 +45,18 @@ node bin/scanmux.mjs --help
 
 Successful checks finish without errors. The final command prints the CLI help.
 
+You can also install a downloaded release tarball into a separate consumer directory:
+
+```sh
+npm install --prefix /absolute/consumer --ignore-scripts --omit=dev --no-audit --no-fund "/absolute/scanmux-<version>.tgz"
+/absolute/consumer/node_modules/.bin/scanmux --version
+/absolute/consumer/node_modules/.bin/scanmux deps /absolute/committed-repository --config /absolute/config.json --json
+```
+
+On Windows, invoke `scanmux.cmd` in that `.bin` directory. Prepare the pinned tools, offline database and configuration below first.
+Release CI installs the actual tarball and checks `--version` and completed offline dependency analysis of a committed npm fixture.
+This check does not establish installed AI-runner or release-transparency verification support.
+
 ### 2. Prepare a recorded offline database
 
 From a source checkout, download the selected official OSV databases to a new absolute path outside every scan target.

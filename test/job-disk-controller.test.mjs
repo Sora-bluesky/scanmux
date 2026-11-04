@@ -20,7 +20,7 @@ import { contained } from './process-owner.ts';
 
 // Run the controller's real input loop and scan on Windows, replacing only Linux
 // paths/platform admission and the already-tested repository/tool boundary.
-const source = (await fs.readFile('internal/linux-job-controller.mjs', 'utf8')).replace(/^import .*;\n/gm, '');
+const source = (await fs.readFile('internal/linux-job-controller.mjs', 'utf8')).replace(/^import .*;\n|^const \{.*\} = await import\('.*'\);\n/gm, '');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 async function runController(t, scenario, prior) {
   const directory = await fs.mkdtemp(path.join(tmpdir(), 'scanmux-disk-controller-'));

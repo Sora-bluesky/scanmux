@@ -23,7 +23,7 @@ import { ReproductionRecordStore, admitVerification, publishVerification, readVe
 
 // One runtime/package inventory. A directory glob never grants application-mount authority.
 export const jobRuntimeFiles = [
-  'LICENSE', 'NOTICE', 'README.ja.md', 'README.md', 'bin/scanmux.mjs', 'package.json',
+  'LICENSE', 'NOTICE', 'README.ja.md', 'README.md', 'bin/scanmux.mjs', 'bin/typescript-bootstrap.mjs', 'package.json',
   'src/adapters.ts', 'src/cli.ts', 'src/config.ts', 'src/controller.ts', 'src/copy-budget.ts', 'src/job-disk.ts', 'src/github.ts', 'src/model.ts',
   'src/engine-catalog.ts', 'src/trivy-adapter.ts', 'src/trivy-plan.ts', 'src/safe-remove.ts', 'src/source-cleanup.ts',
   'src/output.ts', 'src/report-language.ts', 'src/policy.ts', 'src/private-acl.ts', 'src/private-storage.ts', 'src/process.ts', 'src/process-tree.ts', 'src/repository.ts', 'src/safety.ts', 'src/engine-checkpoint.ts',

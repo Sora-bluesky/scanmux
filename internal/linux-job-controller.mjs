@@ -1,15 +1,16 @@
-import { buildPlan, materialize, readTestFiles, verifySnapshot } from '../src/repository.ts';
+import '../bin/typescript-bootstrap.mjs';
 import { spawn } from 'node:child_process';
-import { scan } from '../src/controller.ts';
-import { checkedText } from '../src/output.ts';
-import { CheckpointOwnerStop } from '../src/engine-checkpoint.ts';
-import { digest, hash, record } from '../src/safety.ts';
-import { validateJobBootstrap, validateJobPlan, validateReproductionBootstrap } from '../src/job-records.ts';
-import { guardTest, testIdentity, snapshotIdentity, probeInvocation, validateProbeResult, validateReproductionPlan, reproductionBinding } from '../src/reproduction.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { createJobFrameWriter, JobFrameDecoder, jobFailureCodes, jobRecordFrames, jobDiskSampleLimit } from './job-channel.mjs';
-import { scopedCopyBudget, withCopyBudget } from '../src/copy-budget.ts';
-import { JobDisk, jobDiskPollMs, withJobDisk } from '../src/job-disk.ts';
+const { buildPlan, materialize, readTestFiles, verifySnapshot } = await import('../src/repository.ts');
+const { scan } = await import('../src/controller.ts');
+const { checkedText } = await import('../src/output.ts');
+const { CheckpointOwnerStop } = await import('../src/engine-checkpoint.ts');
+const { digest, hash, record } = await import('../src/safety.ts');
+const { validateJobBootstrap, validateJobPlan, validateReproductionBootstrap } = await import('../src/job-records.ts');
+const { guardTest, testIdentity, snapshotIdentity, probeInvocation, validateProbeResult, validateReproductionPlan, reproductionBinding } = await import('../src/reproduction.ts');
+const { scopedCopyBudget, withCopyBudget } = await import('../src/copy-budget.ts');
+const { JobDisk, jobDiskPollMs, withJobDisk } = await import('../src/job-disk.ts');
 
 const abort = new AbortController();
 const stop = () => abort.abort();

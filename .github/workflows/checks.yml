@@ -98,6 +98,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Typecheck
         run: npm run typecheck
+      - name: Verify the installed package
+        run: node scripts/ci-installed-package.mjs
       - name: Test
         run: npm test
 

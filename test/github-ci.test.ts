@@ -152,11 +152,11 @@ test('pull requests run the suite on Linux and macOS with the same pinned action
       assert.ok(job.includes(options)); assert.ok(windows.includes(options));
     }
     assert.deepEqual([...job.matchAll(/^ {6}- name: (.+)$/gm)].map(match => match[1]),
-      ['Check out head', 'Set up Node', 'Install dependencies', 'Typecheck', 'Test']);
+      ['Check out head', 'Set up Node', 'Install dependencies', 'Typecheck', ...(job === linux ? ['Verify the installed package'] : []), 'Test']);
     assert.doesNotMatch(job, /permissions:|ci-produce|SCANMUX_REAL_CONFIG|^ *if:/m);
   }
   assert.deepEqual([...linux.matchAll(/^ {8}run: (.+)$/gm)].map(match => match[1]),
-    ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', 'npm test']);
+    ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', 'node scripts/ci-installed-package.mjs', 'npm test']);
   assert.deepEqual([...macos.matchAll(/^ {8}run: (.+)$/gm)].map(match => match[1]),
     ['npm ci --ignore-scripts --no-audit --no-fund', 'npm run typecheck', '|']);
   assert.ok(macos.endsWith(`        run: |\n          export TMPDIR="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.env.TMPDIR))')"\n          npm test\n`));
@@ -180,6 +180,8 @@ test('release workflow dry run attests the dispatched commit without tags or rel
   assert.doesNotMatch(dryRun, /\bgh\b|\bTAG\b|refs\/tags\/|releases\/|--draft|contents: write/);
   assert.match(dryRun, /run: npm ci --ignore-scripts --no-audit --no-fund/);
   assert.match(dryRun, /npm pack --ignore-scripts --pack-destination dist/);
+  assert.ok(dryRun.includes('run: node scripts/ci-installed-package.mjs --tgz "dist/scanmux-$VERSION.tgz"'));
+  assert.ok(dryRun.indexOf('Verify the installed package') < dryRun.indexOf('Attest the build provenance'));
   assert.ok(dryRun.includes('test -f "dist/scanmux-$VERSION.tgz"'));
   assert.ok(dryRun.includes('npm sbom --sbom-format cyclonedx > "dist/scanmux-$VERSION.cdx.json"'));
   assert.match(dryRun, /uses: actions\/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8[^\n]*\n {8}with:\n {10}subject-path: dist\/\*/);
@@ -187,7 +189,7 @@ test('release workflow dry run attests the dispatched commit without tags or rel
   assert.match(dryRun, /uses: actions\/upload-artifact@[0-9a-f]{40}[^\n]*\n {8}with:\n {10}name: scanmux-provenance-\$\{\{ github\.run_id \}\}-a\$\{\{ github\.run_attempt \}\}\n {10}path: \|\n {12}dist\/scanmux-\$\{\{ env\.VERSION \}\}\.tgz\n {12}dist\/scanmux-\$\{\{ env\.VERSION \}\}\.cdx\.json\n {12}SHA256SUMS\n {10}if-no-files-found: error\n {10}retention-days: 3/);
   const names = [...dryRun.matchAll(/^ {6}- name: (.+)$/gm)].map(match => match[1]);
   assert.deepEqual(names, ['Check out the dispatched commit', 'Set up Node', 'Set build metadata from the dispatched commit', 'Install dependencies',
-    'Build the package and SBOM', 'Attest the build provenance', 'Generate SHA256 checksums', 'Upload provenance artifacts']);
+    'Build the package and SBOM', 'Verify the installed package', 'Attest the build provenance', 'Generate SHA256 checksums', 'Upload provenance artifacts']);
 });
 
 test('release workflow binds draft artifacts to an existing version tag with minimal permissions and provenance', async () => {
@@ -206,6 +208,8 @@ test('release workflow binds draft artifacts to an existing version tag with min
   assert.ok(release.includes('if [[ ! "$status_line" =~ ^HTTP/[0-9.]+[[:space:]]404([[:space:]]|$) ]]; then\n            echo "Could not determine whether the release exists" >&2\n            exit 1'));
   assert.match(release, /run: npm ci --ignore-scripts --no-audit --no-fund/);
   assert.match(release, /npm pack --ignore-scripts --pack-destination dist/);
+  assert.ok(release.includes('run: node scripts/ci-installed-package.mjs --tgz "dist/scanmux-$VERSION.tgz"'));
+  assert.ok(release.indexOf('Verify the installed package') < release.indexOf('Attest the build provenance'));
   assert.ok(release.includes('test -f "dist/scanmux-$VERSION.tgz"'));
   assert.ok(release.includes('npm sbom --sbom-format cyclonedx > "dist/scanmux-$VERSION.cdx.json"'));
   assert.match(release, /uses: actions\/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8[^\n]*\n {8}with:\n {10}subject-path: dist\/\*/);
@@ -214,7 +218,7 @@ test('release workflow binds draft artifacts to an existing version tag with min
   const names = [...release.matchAll(/^ {6}- name: (.+)$/gm)].map(match => match[1]);
   assert.deepEqual(names, ['Validate the release tag before checkout', 'Check out the release tag', 'Verify the checked-out commit and set build metadata',
     'Set up Node', 'Verify the tag and package versions', 'Refuse to overwrite an existing release', 'Install dependencies', 'Build the package and SBOM',
-    'Attest the build provenance', 'Generate SHA256 checksums', 'Create a draft release']);
+    'Verify the installed package', 'Attest the build provenance', 'Generate SHA256 checksums', 'Create a draft release']);
 });
 
 test('manifest: closed parse refuses extra keys, unknown scenarios and a produced outcome without a CI run', () => {
@@ -460,11 +464,11 @@ test('round trip: the producer seal, anchor and gate commands feed the verifier'
     child.stdout.on('data', chunk => out.push(chunk)); child.on('error', reject);
     child.on('close', code => code === 0 ? resolve(Buffer.concat(out).toString().trim()) : reject(new Error('git rev-parse failed')));
   });
-  const produce = async (command: string, env: Record<string, string>) => new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+  const produce = async (command: string, env: Record<string, string>) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(process.execPath, ['scripts/ci-produce.mjs', command], { windowsHide: true, env: { SystemRoot: process.env.SystemRoot!, WINDIR: process.env.WINDIR!, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
-    const out: Buffer[] = [];
-    child.stdout.on('data', chunk => out.push(chunk)); child.stderr.resume(); child.on('error', reject);
-    child.on('close', code => resolve({ code, stdout: Buffer.concat(out).toString() }));
+    const out: Buffer[] = [], err: Buffer[] = [];
+    child.stdout.on('data', chunk => out.push(chunk)); child.stderr.on('data', chunk => err.push(chunk)); child.on('error', reject);
+    child.on('close', code => resolve({ code, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() }));
   });
   const runProducer = async (eventName: 'workflow_run' | 'workflow_dispatch', payload: unknown, state: Record<string, string>, deliveryFiles: Files) => {
     const temp = await mkdtemp(path.join(tmpdir(), 'scanmux-ci-produce-'));
@@ -477,7 +481,8 @@ test('round trip: the producer seal, anchor and gate commands feed the verifier'
     const env = { RUNNER_TEMP: temp, GITHUB_EVENT_NAME: eventName, GITHUB_EVENT_PATH: path.join(temp, 'event.json'), GITHUB_REPOSITORY: repository,
       GITHUB_REPOSITORY_ID: String(repoId), GITHUB_WORKFLOW_REF: `${repository}/${producerWorkflowPath}@refs/heads/main`, GITHUB_RUN_ID: String(runId),
       GITHUB_RUN_ATTEMPT: String(attempt), GITHUB_SHA: head };
-    assert.equal((await produce('seal', env)).code, 0, 'seal');
+    const sealed = await produce('seal', env);
+    assert.equal(sealed.code, 0, 'seal: ' + sealed.stderr);
     const anchored = await produce('anchor', { ...env, SCANMUX_ARTIFACT_ID: String(artifactId) });
     assert.equal(anchored.code, 0, 'anchor');
     const gate = await produce('gate', env);
