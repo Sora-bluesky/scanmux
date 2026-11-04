@@ -17,7 +17,7 @@ A separate `ai-plan` / `ai-scan` workflow connects Windows to an isolated Linux 
 It requires exact plan acceptance, prepared pinned assets, dedicated credentials and verified runtime boundaries.
 Development evidence uses synthetic responses, not real Blue inference.
 
-## Scope of v0.1.0
+## Scope of v0.2.0
 
 For JS/TS (`npm`), Python (`PyPI`) and Go (`Go`), support means reading these inputs,
 running offline OSV dependency checks, Gitleaks secret checks and explicitly accepted AI checks.
@@ -63,7 +63,7 @@ The following are outside this scope:
 | Cleanup ancestor race | A process running as the same user can swap an ancestor for a junction during removal. |
 | Parent ACL changes | A process running as the same user, as owner, can widen the parent ACL after the first full check in a process. |
 | First workspace creation | The first workspace in a process is created before the parent ACL check, leaving a race window for a process running as the same user. Nothing is written into that workspace if the check fails. |
-| Quality evaluation size | The v0.1.0 quality evaluation covers one vulnerable/fixed pair per supported language (JS/TS, Python, Go), not a large corpus. The Go pair has scanner-only evidence because the reproduction job cannot run a compiled binary. |
+| Quality evaluation size | The evaluation covers three smoke pairs plus the 90-advisory dependency evaluation in [docs/results.md](docs/results.md), which measures matching and is not a general detection rate. The Go pair has scanner-only evidence because the reproduction job cannot run a compiled binary. |
 | Release artifact verification | Release artifacts include a CycloneDX SBOM and GitHub build provenance attestations for the package and SBOM. Verify each with `gh attestation verify PATH/TO/ARTIFACT --repo OWNER/REPO`. |
 
 ## What it does
