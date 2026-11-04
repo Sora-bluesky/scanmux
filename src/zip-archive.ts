@@ -14,7 +14,7 @@ function slice(bytes: Buffer, start: number, length: number): Buffer {
   if (start < 0 || length < 0 || start + length > bytes.length) invalid();
   return bytes.subarray(start, start + length);
 }
-const utf8 = new TextDecoder('utf-8', { fatal: true });
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 export function readZip(archive: Buffer, limits: ZipLimits, only?: string): Map<string, Buffer> {
   let end = -1;
@@ -63,6 +63,6 @@ export function readZip(archive: Buffer, limits: ZipLimits, only?: string): Map<
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
-  if (cursor !== end) invalid();
+  if (cursor !== end || (only !== undefined && !files.has(only))) invalid();
   return files;
 }

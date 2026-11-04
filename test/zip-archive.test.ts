@@ -22,10 +22,18 @@ test('zip reader: only the exact selected member is inflated and charged to the 
     archive[30 + 'other'.length] = 0x07;
     assert.throws(() => readZip(archive, { ...limits, maxBytes: 4096 }), /zip_archive_invalid/);
     assert.deepEqual([...readZip(archive, { ...limits, maxBytes: selected[1].length }, selected[0])], [selected]);
-    assert.deepEqual([...readZip(archive, { ...limits, maxBytes: 0 }, 'ENGINE.EXE')], []);
+    assert.throws(() => readZip(archive, { ...limits, maxBytes: 0 }, 'ENGINE.EXE'), /zip_archive_invalid/);
     assert.throws(() => readZip(archive, { ...limits, maxBytes: selected[1].length - 1 }, selected[0]), /zip_archive_invalid/);
     assert.throws(() => readZip(archive, { ...limits, maxEntries: 1 }, selected[0]), /zip_archive_invalid/);
   }
+});
+
+test('zip reader: a UTF-8 BOM is part of the selected member name', () => {
+  const entries: [string, Buffer][] = [['\uFEFFtrivy.exe', Buffer.from('content')]];
+  const archive = zip(entries), central = archive.readUInt32LE(archive.length - 6);
+  archive.writeUInt16LE(0x800, localHeader.flags); archive.writeUInt16LE(0x800, central + 8);
+  assert.deepEqual([...readZip(archive, limits, entries[0][0])], entries);
+  assert.throws(() => readZip(archive, limits, 'trivy.exe'), /zip_archive_invalid/);
 });
 
 test('zip reader: selecting a member still refuses unrelated duplicates and bad headers', () => {
