@@ -226,6 +226,43 @@ const workspaceAssessment = (files: Record<string, unknown>) => assessUpgrades(i
   lockfile: 'py/uv.lock', name: 'example', version: '1.1', advisories: ['GHSA-test'], fixedVersions: ['1.2'], fixEvents: 'complete',
 }]);
 
+test('uv editable path dependencies without workspace declarations retain single-project results', () => {
+  for (const source of ['editable', 'virtual']) for (const rootPackage of [true, false]) {
+    const files = {
+      'py/pyproject.toml': '[project]\nname = "app"\ndependencies = ["example>=1"]\n',
+      'py/uv.lock': ['version = 1',
+        ...(rootPackage ? ['[[package]]', 'name = "app"', 'source = { editable = "." }'] : []),
+        '[[package]]', 'name = "local"', `source = { ${source} = "libs/local" }`, 'dependencies = [{ name = "example" }]',
+        '[package.metadata]', 'requires-dist = [{ name = "example", specifier = ">=1" }]', '', ...uvPackage('example', '1.1'),
+      ].join('\n'),
+    };
+    const project = only(files, files), assessed = workspaceAssessment(files);
+    assert.deepEqual(project.status, { kind: 'complete' }); assert.deepEqual(project.manifest, { base: null, head: null });
+    assert.equal(project.graph.head?.instances, rootPackage ? 3 : 2); assert.equal(project.graph.head?.edges, 1);
+    assert.deepEqual([project.requirements, project.changes], [[], []]);
+    assert.deepEqual(assessed.projects, [{ lockfile: 'py/uv.lock', ecosystem: 'uv', status: 'complete', reason: null }]);
+    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason], ['allowed', null]);
+    const workspace = { ...files, 'py/pyproject.toml': files['py/pyproject.toml'] + '[tool.uv.workspace]\nmembers = []\n' };
+    assert.equal(workspaceAssessment(workspace).projects[0]?.reason, 'workspaces_outside_subset');
+  }
+});
+
+test('uv manifest dependency groups without workspace members retain the single-project graph and mismatch', () => {
+  for (const members of ['', 'members = []\n']) {
+    const files = {
+      'py/pyproject.toml': '[project]\nname = "app"\n[dependency-groups]\ndev = ["example>=1"]\n',
+      'py/uv.lock': ['version = 1', '[manifest]', members + '[manifest.dependency-groups]', 'dev = [{ name = "example", specifier = ">=1" }]',
+        '', ...uvPackage('example', '1.1')].join('\n'),
+    };
+    const project = only(files, files), assessed = workspaceAssessment(files);
+    assert.deepEqual(project.graph, { base: { instances: 1, edges: 0, unresolvedEdges: 0, outside: [], outsideCount: 0, outsideByReason: [] },
+      head: { instances: 1, edges: 0, unresolvedEdges: 0, outside: [], outsideCount: 0, outsideByReason: [] } });
+    assert.deepEqual(project.status, { kind: 'complete' }); assert.deepEqual(project.manifest, { base: null, head: null });
+    assert.deepEqual(assessed.projects, [{ lockfile: 'py/uv.lock', ecosystem: 'uv', status: 'complete', reason: null }]);
+    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason], ['undetermined', 'manifest_lock_mismatch']);
+  }
+});
+
 test('uv workspace members share comparison and upgrade analysis with path-labelled requirements', () => {
   const base = uvWorkspace(), head = uvWorkspace('1.1', '>=1.1'), project = only(base, head);
   assert.deepEqual(project.status, { kind: 'complete' }); assert.deepEqual(project.manifest, { base: null, head: null });
@@ -320,7 +357,16 @@ test('uv virtual roots without a lock package use the manifest dependency groups
   files[member] = '[project]\nname = "member-name"\ndependencies = ["example>=1"]\n';
   assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
   assert.equal(workspaceAssessment(files).upgrades[0]?.state, 'allowed');
+  const project = only({}, files);
+  assert.deepEqual(project.graph.head, { instances: 2, edges: 2, unresolvedEdges: 0, outside: [], outsideCount: 0, outsideByReason: [] });
+  assert.deepEqual(only(files, files).graph, { base: project.graph.head, head: project.graph.head });
+  assert.deepEqual(project.changes.map(change => change.name), ['example']);
+  assert.deepEqual(only(files, {}).changes.map(change => change.name), ['example']);
+  const assessed = workspaceAssessment(files);
+  assert.deepEqual(assessed.upgrades.map(upgrade => upgrade.name), ['example']);
+  assert.deepEqual(assessed.upgrades.flatMap(upgrade => upgrade.instances.map(instance => instance.key)), ['example']);
   files['py/pyproject.toml'] = files['py/pyproject.toml']!.replace('example>=1', 'example>=1.1');
+  assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
   assert.equal(workspaceAssessment(files).upgrades[0]?.reason, 'manifest_lock_mismatch');
 });
 
@@ -351,6 +397,7 @@ test('uv member-only changes affect the manifest digest, declarations and lock a
   const head = { ...base, [member]: base[member]!.replace('example>=1', 'example>=1.1') }, diff = only(base, head);
   assert.notEqual(diff.inputs.base.manifestSha256, diff.inputs.head.manifestSha256);
   assert.deepEqual(diff.requirements.map(item => [item.section, item.name]), [['servers/member:project.dependencies', 'example']]);
+  assert.equal(workspaceAssessment(head).projects[0]?.status, 'complete');
   assert.equal(workspaceAssessment(head).upgrades[0]?.reason, 'manifest_lock_mismatch');
   const comment = only(base, { ...base, [member]: base[member]! + '# change\n' });
   assert.notEqual(comment.inputs.base.manifestSha256, comment.inputs.head.manifestSha256);

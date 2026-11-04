@@ -158,7 +158,9 @@ test('direct requirements come from the manifest; a manifest that disagrees with
   const unlocked = npm({ root: { a: '^1.0.0' }, manifest: { dependencies: { a: '^1.0.0', lodash: '4.17.20' } }, packages: { 'node_modules/a': pkg('1.0.0', { dependencies: { lodash: '^4.17.0' } }) } });
   assert.deepEqual(verdict(assess(unlocked)), mismatch);
   const uv = uvProject();
-  assert.deepEqual(verdict(assess({ ...uv, 'pyproject.toml': uv['pyproject.toml'].replace('<3', '<2.32') }, uvFinding())), mismatch);
+  const files = { ...uv, 'pyproject.toml': uv['pyproject.toml'].replace('<3', '<2.32') };
+  assert.deepEqual(assessUpgrades(inputs(files), [finding(uvFinding())]).projects, [{ lockfile: 'uv.lock', ecosystem: 'uv', status: 'complete', reason: null }]);
+  assert.deepEqual(verdict(assess(files, uvFinding())), mismatch);
 });
 
 test('repository uv constraints, overrides and dependency metadata are declared overrides', () => {

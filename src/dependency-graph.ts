@@ -397,6 +397,7 @@ function uvGraph(text: string): Graph {
   if (packages.length > dependencyLimits.instances) invalid('instance_limit');
   const manifest = lock.manifest;
   if (manifest !== undefined && !isTomlTable(manifest)) return invalid();
+  const workspaces = Array.isArray(manifest?.members) && manifest.members.length > 0;
   const parsed = packages.map(item => {
     if (!isTomlTable(item) || typeof item.name !== 'string') return invalid();
     const name = parsePypiName(item.name);
@@ -420,7 +421,7 @@ function uvGraph(text: string): Graph {
     optional.set(key, new Map(extras));
     const entries = root ? rootEntries(table.metadata) : [];
     const member = root && isTomlTable(table.source) && typeof table.source[source!] === 'string' ? table.source[source!] as string : '.';
-    const groupLabel = (group: string) => root ? memberLabel(member, group) : group;
+    const groupLabel = (group: string) => root && workspaces ? memberLabel(member, group) : group;
     for (const entry of entries) addDirect(direct, entry.name, uvDirect(groupLabel(entry.group ?? '?'), entry.extras, entry.spec, entry.marker));
     const specFor = (group: string, dependency: string): readonly Constraint[] | 'not_recorded' => {
       const matching = entries.filter(entry => entry.group === group && entry.name === dependency);
@@ -441,10 +442,9 @@ function uvGraph(text: string): Graph {
     } });
   }
   // uv records a virtual workspace root's groups in the lock manifest when it has no package entry.
-  if (manifest?.['dependency-groups'] !== undefined && !parsed.some(item => isTomlTable(item.table.source)
+  if (workspaces && manifest?.['dependency-groups'] !== undefined && !parsed.some(item => isTomlTable(item.table.source)
     && (item.table.source.editable === '.' || item.table.source.virtual === '.'))) {
     const entries = rootEntries({ 'requires-dev': manifest['dependency-groups'] });
-    if (builder.nodes.size === dependencyLimits.instances) invalid('instance_limit');
     builder.node({ key: '.', name: '.', version: null, versionId: null, root: true, bundled: false, nonRegistry: false,
       digests: { flags: fingerprint(null), artifact: fingerprint(null), declared_dependencies: fingerprint(null), other: fingerprint(null) } });
     for (const entry of entries) {
@@ -494,7 +494,7 @@ function summary(graph: Graph): GraphSummary {
   const counts = new Map<string, OutsideCount>();
   for (const { field, reason } of outside) counts.set(field + ':' + reason, { field, reason, count: (counts.get(field + ':' + reason)?.count ?? 0) + 1 });
   return {
-    instances: graph.nodes.size, edges: edges.length, unresolvedEdges: edges.filter(edge => edge.to === null).length,
+    instances: graph.nodes.size - (graph.uvWorkspace && graph.nodes.has('.') ? 1 : 0), edges: edges.length, unresolvedEdges: edges.filter(edge => edge.to === null).length,
     outside: outside.slice(0, dependencyLimits.outsideListed), outsideCount: outside.length,
     outsideByReason: [...counts].sort(([left], [right]) => compareText(left, right)).map(([, count]) => count),
   };
@@ -588,8 +588,7 @@ function projectManifest(ecosystem: Ecosystem, side: Side, graph: Graph | null):
   if (ecosystem !== 'uv' || !graph?.uvWorkspace) return single;
   const { members, manifest: locked } = graph.uvWorkspace;
   const memberPath = (source: TomlTable) => source.editable ?? source.virtual;
-  const lockWorkspace = (Array.isArray(locked?.members) && locked.members.length > 0)
-    || members.some(item => memberPath(item.source) !== '.') || members.length > 1;
+  const lockWorkspace = Array.isArray(locked?.members) && locked.members.length > 0;
   if (!side.manifest) return lockWorkspace ? { manifest: { kind: 'undetermined', reason: 'workspaces_outside_subset' }, sha256: null } : single;
   const text = decode(side.manifest);
   if (!text.ok) return single;
@@ -700,7 +699,8 @@ function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side
   if (raw.length > dependencyLimits.changes || requirements.length > dependencyLimits.changes) return { ...common, status: { kind: 'change_limit' }, requirements: [], changes: [] };
   const touched = new Set(raw.flatMap(change => change.kind === 'version_changed' || change.kind === 'added' ? [change.node.key] : []));
   // Workspace packages are omitted from change rows but can carry a version change along an explanation path.
-  if ((head.uvWorkspace?.members.length ?? 0) > 1) for (const node of head.nodes.values()) {
+  if ((head.uvWorkspace?.members.length ?? 0) > 1 && Array.isArray(head.uvWorkspace?.manifest?.members)
+    && head.uvWorkspace.manifest.members.length > 0) for (const node of head.nodes.values()) {
     if (node.root && (!base?.nodes.has(node.key) || base.nodes.get(node.key)!.versionId !== node.versionId)) touched.add(node.key);
   }
   const changedDeclarations = new Set(changed.flatMap(({ after }) => after ? [after.group + '\0' + after.name] : []));

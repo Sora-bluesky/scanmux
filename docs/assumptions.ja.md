@@ -308,9 +308,9 @@ AI の実行が失敗すれば `ERROR`、終わらなければ `INCOMPLETE` の�
 
 ## 依存プロジェクトの解析
 
-uv workspaceは、各commitから収集済みの依存入力だけで判定します。`uv.lock`のeditable・virtualがメンバーのパスの正本です。安全な相対パス、収集済みのメンバーmanifest、正規化したプロジェクト名の一致、`[manifest] members`の集合の一致が必要です。`[manifest]`の省略はルートのみを意味します。workspaceの`members`・`exclude`はリテラルのパスか末尾の単一`/*`に限り、条件で選ばれる収集済みmanifestはすべてlock内に必要です。メンバー内のworkspace宣言も扱いません。所属がこの範囲に収まらなければ`workspaces_outside_subset`で`undetermined`のままです。メンバーのmanifest不正や動的依存は、そのメンバーの理由でプロジェクト全体を判定不能にします。
+uv workspaceの解析は、ルートに`[tool.uv.workspace]`宣言があるか、lockの`[manifest] members`が空でない場合だけ行います。editableなパス依存だけなら単一プロジェクトとして解析します。workspaceは、各commitから収集済みの依存入力だけで判定します。`uv.lock`のeditable・virtualがメンバーのパスの正本です。安全な相対パス、収集済みのメンバーmanifest、正規化したプロジェクト名の一致、`[manifest] members`の集合の一致が必要です。`[manifest]`の省略はルートのみを意味します。workspaceの`members`・`exclude`はリテラルのパスか末尾の単一`/*`に限り、条件で選ばれる収集済みmanifestはすべてlock内に必要です。メンバー内のworkspace宣言も扱いません。所属がこの範囲に収まらなければ`workspaces_outside_subset`で`undetermined`のままです。メンバーのmanifest不正や動的依存は、そのメンバーの理由でプロジェクト全体を判定不能にします。
 
-workspace宣言のある仮想ルートは`[project]`を省略でき、依存グループと解決設定だけを提供します。それ以外で`[project]`がなければ`manifest_invalid`です。メンバーの要求は節名に相対パスを付けて統合し、解決設定はルートのみ、sourcesは全メンバーから取得します。manifestのハッシュは全メンバーのmanifestを含みます。追加のファイル読み取りは行わず、既存の入力容量制限と除外条件を適用します。baseとheadは独立に判定します。npm workspaceの`workspaces_outside_subset`とアドバイザリ照合は変わりません。解析が完了しても、更新先を解決・インストールできる証明にはなりません。
+workspace宣言のある仮想ルートは`[project]`を省略でき、依存グループと解決設定だけを提供します。それ以外で`[project]`がなければ`manifest_invalid`です。メンバーの要求は節名に相対パスを付けて統合し、解決設定はルートのみ、sourcesは全メンバーから取得します。manifestのハッシュは全メンバーのmanifestを含みます。追加のファイル読み取りは行わず、既存の入力容量制限と除外条件を適用します。baseとheadは独立に判定します。npm workspaceの`workspaces_outside_subset`とアドバイザリ照合は変わりません。プロジェクトの状態が`complete`でも、manifestの要求とlockの一致は保証しません。単一プロジェクトでもworkspaceでも、不一致のある更新候補は別途`manifest_lock_mismatch`になります。更新先を解決・インストールできる証明にもなりません。
 
 ## 確かめていない点
 
