@@ -360,6 +360,8 @@ OSV engine to flag the advisory at base and clear it at head.
 
 ### Results (2026-10-31)
 
+On 2026-11-04, the lodash and PyYAML pairs were rerun with stricter tests that accept only the fix’s own rejection as “not reproduced”, and gave the same result.
+
 Host: Windows 11 with Docker Desktop 29.9.2 (Linux engine); job image node 24.22.1
 with python3 3.11.2; OSV-Scanner 2.7.0 with npm, PyPI and Go offline databases
 acquired 2026-10-31. Both scans of every pair completed with OSV coverage
@@ -383,6 +385,49 @@ head, with the test unchanged." and exited 1, because its exit code follows the
 original base report, which still has a High finding, as documented in
 [Get started](getting-started.md#reproduce-one-finding-and-check-an-unchanged-regression-test). Go has scanner evidence only because the
 reproduce job cannot run a compiled Go binary.
+
+## Evaluation: 90 dependency advisories (2026-11-04)
+
+This evaluation measures whether the OSV engine matches published dependency advisories from a lockfile, and how often a published advisory can get a harmless offline test. It does not measure discovery of unknown vulnerabilities, Gitleaks, Trivy, or the AI scan. GitHub Advisory Database also feeds the OSV database, so high detection is expected and is not a general detection rate.
+
+### Selection, fixed before any scan
+
+From GitHub Advisory Database commit `d29f93b34c304df05cd3a23ea898c61ebb69d2ea`, select reviewed advisories published before 2026-10-01, not withdrawn, with exactly one ecosystem range having one introduced and one fixed event. The candidate counts were npm 8141, PyPI 10447 and Go 7026. Rank by SHA-256 of seed, ecosystem, package and advisory id, using seed `d29f93b34c304df05cd3a23ea898c61ebb69d2ea|scanmux-l06-v1`, with one case per package name as written. The comparison was case-sensitive, so PyPI `Django` and `django` count as two cases of one distribution, and PyPI covers 29 distinct packages. Use the first 30 eligible cases per ecosystem. A case is ineligible when the package is not found, the fixed version cannot be parsed or is not a stable registry release, or no affected stable version exists; scanner results played no part. The base is the highest stable version below the fix, and the head is the fix.
+
+### Detection
+
+A lockfile containing only the target package was scanned with `job-scan` at both versions, using OSV-Scanner 2.7.0 and an offline database acquired 2026-10-31. All 180 scans completed with OSV coverage `analyzed`.
+
+| Ecosystem | Pairs | Skipped as ineligible | Reported at base | Not reported at base | Still reported at head |
+|---|---|---|---|---|---|
+| npm | 30 | 3 | 29 | 1 | 0 |
+| PyPI | 30 | 1 | 30 | 0 | 1 |
+| Go | 30 | 22 | 30 | 0 | 0 |
+
+The one not reported is `lodash-amd` 4.18.0 for GHSA-f23m-r3pf-42rh: the advisory snapshot says fixed in 4.18.1, while the older offline database says 4.18.0, so the scanner followed its database. The advisory snapshot is dated 2026-11-04 and the database 2026-10-31; that gap is a flaw in this run.
+
+The one still reported is `python-jose` 3.4.0: GHSA-6c5p-j8vq-pqhj says fixed in 3.4.0, while an aliased advisory, GHSA-3qf3-8w2g-rqmx, lists it as affected through 3.5.0.
+
+Most Go skips are cases where the fix is not a stable release, so those cases are not represented. Other advisories were reported too, 1640 at base and 1517 at head. They were not judged, so this gives no false positive rate.
+
+### Reproduction
+
+The first 20 eligible cases each for npm and PyPI were attempted in rank order, with no replacement. Go was not attempted because the job cannot run compiled Go binaries. Tests set a harmless in-process marker or compare a value, and run only in the offline job. A separate review read each test and each refusal against the code; this classification is a review judgement.
+
+| Result | npm | PyPI |
+|---|---|---|
+| Shows the defect's effect; base reproduced, head not | 9 | 7 |
+| Shows only a sign of the fix | 3 | 0 |
+| Tested another change, not counted | 1 | 0 |
+| The test failed in the job | 0 | 1 |
+| No test, reason confirmed against the code | 6 | 10 |
+| No test, a route may have been missed | 1 | 2 |
+
+Common reasons for no test include behaviour needing a browser or native server parts, a wheel unavailable for the job's Python 3.11, a fix outside the package or in a large bundle over the 2 MB limit used here, and a fix depending on a dependency that a stand-in would replace.
+
+Forty attempts are too few to give a per-language rate. Several of the 16 show only part of the chain: the first step of the defect, or small inputs rather than exhaustion. Some use stand-ins for code other than the fixed code. A reproduction proves nothing about the rest of the package.
+
+The corpus, tests and raw results are not in this repository.
 
 ## Related docs
 
