@@ -145,6 +145,20 @@ SDKの失敗は、容量不足の文章や同時の資源超過観測だけで�
 SDK内部の容量不足を網羅しません。
 workerの直接観測と、ホストが確認したOOM・期限超過は別の証拠経路です。
 
+GitHub-hostedの`ubuntu-24.04` runnerでSDK 0.5.1を使い、ネットワーク接続とprovider呼出しなしで、空きブロックのないファイルシステムを計測した結果は次のとおりです。
+
+| SDKの処理 | ファイルシステム | 子プロセスでのSQLiteの結果 | ScanMuxの結果 |
+|---|---|---|---|
+| 最初の`register-cli-scan`、新規データベース | tmpfs | `SQLITE_FULL` | 上記の条件を満たす場合は`resource_disk_exceeded` |
+| その他のworkbench command、既存データベース | tmpfs | `SQLITE_IOERR_SHMSIZE` | 容量不足の原因として扱わない |
+| `register-cli-scan`を含むすべてのworkbench command | ext4 | `SQLITE_CANTOPEN` | 容量不足の原因として扱わない |
+
+計測したその他のworkbench commandは`get-cli-scan-resume`、`get-scan`、`get-scan-feedback`、`set-scan-thread`、`set-scan-cost-limit`、`prepare-scan-completion`、`finalize-scan-usage`、`fail-scan`です。いずれもデータベースを開いてマイグレーションを適用するため、読取りも失敗します。
+
+`SQLITE_IOERR_SHMSIZE`と`SQLITE_CANTOPEN`には他の原因もあるため、ScanMuxはディスク容量不足の原因として扱いません。これらの失敗は`worker_sdk_initialization_failed`や`worker_sdk_finalization_failed`など、元の段階のエラーコードを維持します。SDK自身のエラーチェーンにはネイティブエラーコードがなく、すべての`code`はnullでした。workbenchの失敗は終了ステータスとテキストとしてのみNodeに届きます。
+
+他のファイルシステム、空きブロックはあるがinodeがないファイルシステム、SDK自身のNode書込み、MCPの処理経路、実際のproviderを使った実行、メモリ上限は計測していません。
+
 ### 旧AI設定を移行する
 
 この制限はWindows controller、ホスト側Git/Gitleaks/OSV、認証中継、GitHub取得、保存レポートの総容量までを保証しません。
