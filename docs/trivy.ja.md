@@ -27,8 +27,26 @@ Windows x64 ZIP の取得証拠で使う SHA-256 は `1051f49cb22d5284f43425f72a
 
 ZIP と展開した実行ファイルを別々に確認し、ZIP と実行ファイルの対応を取得記録に残します。
 ZIP の証明だけでは実行ファイルの配布元の証明になりません。
-`publisher`では、`sigstore-slsa-archive`の証拠で、検証したZIPの証明と固定した実行ファイルを結び付けられます。ScanMuxはZIPを非公開の領域へコピーしてハッシュを再確認し、正確な`trivy.exe`メンバーのSHA-256がエンジンの固定値と一致することを要求します。その後、ZIPのハッシュと設定した配布元の識別情報に対して、`gh`でZIPのコピーを検証します。メンバーの欠落・重複・不一致、またはZIPの解析失敗は不正として拒否し、ZIPの読取り失敗・変更は検証不能として拒否します。
-`engine-record`要求の証拠に、`bundle`・`trustedRoot`・`sourceRef`・`sourceDigest`とともに、ZIPの絶対パスを`archive`として、`"member":"trivy.exe"`を指定します。ZIPは検査対象の外に置き、ほかの証拠パスと同じ規則に従います。[実行時の制御](runtime-controls.ja.md)を参照してください。これは対応する検証の仕組みの説明であり、実際のTrivyリリースを検証済みとする記述ではありません。
+`publisher`では、`sigstore-slsa-archive`の証拠で、検証したZIPの証明と固定した実行ファイルを結び付けられます。ScanMuxはZIPを非公開の領域へコピーしてハッシュを再確認し、正確な`trivy.exe`メンバーのSHA-256がエンジンの固定値と一致することを要求します。その後、ZIPのハッシュと設定した配布元の識別情報に対して、`gh`でZIPのコピーを検証します。メンバーの欠落・重複・サイズ超過・不一致、またはZIPの解析失敗は不正として拒否します。実行許可の確認時にZIPを読めない場合や変更されている場合は、検証不能として拒否します（`archive_unreadable`または`archive_changed`）。`engine-record`では、ZIPの欠落はbundleの欠落と同じ一般的な入力エラーです。ZIP内の名前に非ASCIIバイトを含む場合は、UTF-8フラグが必要です。全エントリーのヘッダーを検証し、正確に一致するメンバーだけを、エンジンの非公開コピーのバイト数まで展開します。
+`engine-record`要求の証拠に、`bundle`・`trustedRoot`・`sourceRef`・`sourceDigest`とともに、ZIPの絶対パスを`archive`として、`"member":"trivy.exe"`を指定します。ZIPは検査対象の外に置き、ほかの証拠パスと同じ規則に従います。コピー予算は実行許可の確認時に適用し、`engine-record`はどの証拠ファイルにも設定しません。[実行時の制御](runtime-controls.ja.md)を参照してください。
+
+この検証手順は、公式のTrivy 0.76.1 Windows x64 ZIPに対して、`gh` 2.94.0で実行しました。その際、Trivy自体のプロセスは起動していません。検証には次の値を使いました。
+
+| 項目 | 値 |
+|---|---|
+| `repository` | `aquasecurity/trivy` |
+| `certIdentity` | `https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.1` |
+| `sourceRef` | `refs/tags/v0.76.1` |
+| `sourceDigest` | `e713f67f7d54decdcd9b3132c9751833dcced698` |
+| `predicateType` | `https://slsa.dev/provenance/v1` |
+| `member` | `trivy.exe` |
+
+検査処理の外で、`<zip>`を取得済みZIPのパスに置き換えて証拠を取得します。trusted rootの出力は、`trustedRoot`に指定するファイルへ保存します。
+
+```sh
+gh attestation download <zip> --repo aquasecurity/trivy
+gh attestation trusted-root
+```
 ダイジェストの一致が固定するのはバイト列です。
 配布物や内蔵規則の正しさ・鮮度・誠実さは示しません。
 

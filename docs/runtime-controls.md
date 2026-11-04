@@ -99,8 +99,8 @@ Private copies of the engine, bundle and trusted root are re-hashed. With `sigst
 
 It passes only on exit 0 with JSON matching the engine SHA256, predicate type and every expected certificate value, GitHub-hosted runner included.
 
-For an engine shipped inside a ZIP, `sigstore-slsa-archive` adds a pinned `archive` and an exact `member` name to the same evidence fields. The request uses an absolute ZIP path; the ledger stores its path and SHA-256. The member is a plain file name or forward-slash relative path, with no `..`, leading slash or backslash; matching is case-sensitive.
-ScanMux privately copies the ZIP through the existing copy budget, re-checks its pin and reads the exact member through its ZIP reader. The member's SHA-256 must match the pinned engine. Only then does `gh` verify the ZIP copy, and its JSON must name the ZIP SHA-256 with the same predicate and certificate checks.
+For an engine shipped inside a ZIP, `sigstore-slsa-archive` adds a pinned `archive` and an exact `member` name to the same evidence fields. The request uses an absolute ZIP path; the ledger stores its path and SHA-256. The member is a plain file name or forward-slash relative path, with no `..`, leading slash or backslash; matching is case-sensitive. ZIP names containing any non-ASCII byte require the UTF-8 flag.
+ScanMux privately copies the ZIP, re-checks its pin and reads the exact member through its ZIP reader. The existing copy budget applies at admission; `engine-record` does not establish a copy budget for any evidence file. Every entry's headers are validated, but only the selected member is expanded, up to the byte length of the private engine copy already charged at admission. The member's SHA-256 must match the pinned engine. Only then does `gh` verify the ZIP copy, and its JSON must name the ZIP SHA-256 with the same predicate and certificate checks.
 A ZIP attestation alone never proves the executable: both the verified ZIP attestation and the member-to-engine hash match are required. This proves the byte relationship and configured publisher identity, not the engine's correctness, freshness or safety. Only ZIP is supported.
 
 Record an update with a request (`evidence` may also be `{"kind":"none","reason":"publisher_evidence_unpublished"}`):
@@ -132,7 +132,7 @@ Refusals exit `2` for `deps` (failure), or `4` for other commands, before any en
 For commands other than `deps`, the first three add `"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}` after `policy`.
 `provenance_ledger_mismatch` adds neither a `policy` nor an `engine` object.
 
-ZIP refusals use `engine.reason: "archive_member_mismatch"` with state `invalid` for a missing, duplicate or hash-mismatched member, or an unparseable ZIP. An unreadable ZIP uses `archive_unreadable`; a ZIP that differs from its pin uses `archive_changed`, both with state `unverifiable`.
+ZIP refusals use `engine.reason: "archive_member_mismatch"` with state `invalid` for a missing, duplicate, oversized or hash-mismatched member, or an unparseable ZIP. At admission, an unreadable ZIP uses `archive_unreadable`; a ZIP that differs from its pin uses `archive_changed`, both with state `unverifiable`. At `engine-record`, a missing ZIP is a general input failure, just like a missing bundle.
 
 Native commands, `job-scan` and `host-job-scan` apply v2; job Linux engines are host-verified before mounting. `serve` refuses schema 2.
 

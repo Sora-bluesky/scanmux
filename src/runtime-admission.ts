@@ -1,6 +1,5 @@
-import { copyFile, readFile } from 'node:fs/promises';
+import { copyFile, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { constants as bufferConstants } from 'node:buffer';
 import path from 'node:path';
 import { releaseJobDiskRoot } from './job-disk.ts';
 import { privateWorkspace } from './private-storage.ts';
@@ -65,7 +64,7 @@ async function verifyIn(workspace: string, policy: RuntimePolicy2, check: Publis
     try { bytes = await readFile(attested); } catch { return 'archive_unreadable'; }
     if (hash(bytes) !== check.archive.file.sha256) return 'archive_changed';
     let member: Buffer | undefined;
-    try { member = readZip(bytes, { maxEntries: 0xfffe, maxBytes: bufferConstants.MAX_LENGTH }).get(check.archive.member); }
+    try { member = readZip(bytes, { maxEntries: 0xfffe, maxBytes: (await stat(copies.artifact)).size }, check.archive.member).get(check.archive.member); }
     catch { return 'archive_member_mismatch'; }
     if (!member || hash(member) !== check.expected.sha256) return 'archive_member_mismatch';
     expected = { ...expected, sha256: check.archive.file.sha256 };

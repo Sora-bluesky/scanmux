@@ -287,7 +287,8 @@ const signedRequest = { component: 'osv', version: '2.3.0', artifact: osvPath, e
 
 test('engine-record and publisher admission bind a Trivy ZIP attestation to the exact executable member', async () => {
   const artifact = fresh('trivy.exe'), archive = fresh('trivy.zip'), member = 'bin/trivy.exe', body = Buffer.from('synthetic trivy executable');
-  const bytes = zip([['LICENSE', Buffer.from('synthetic license')], [member, body]]);
+  const bytes = zip([['LICENSE', Buffer.alloc(body.length + 1)], [member, body]]);
+  bytes[30 + 'LICENSE'.length] = 0x07;
   await fs.writeFile(artifact, body); await fs.writeFile(archive, bytes);
   const pin = { path: fresh('ledger.jsonl'), entries: 0, head: '0'.repeat(64) }, require = [{ component: 'trivy', level: 'publisher', publisher }];
   const evidence = { ...signedRequest.evidence, kind: 'sigstore-slsa-archive', archive, member };
@@ -319,11 +320,12 @@ test('engine-record and publisher admission bind a Trivy ZIP attestation to the 
   } finally { duringVerification = null; }
 });
 
-for (const problem of ['tampered member', 'missing member', 'duplicate member', 'wrong case', 'malformed ZIP'] as const) {
+for (const problem of ['tampered member', 'oversized member', 'missing member', 'duplicate member', 'wrong case', 'malformed ZIP'] as const) {
   test(`archive publisher refuses ${problem} before the verifier and never records it`, async () => {
     const artifact = fresh('trivy.exe'), archive = fresh('trivy.zip'), body = Buffer.from('synthetic trivy executable');
     const member = 'trivy.exe';
     const bytes = problem === 'malformed ZIP' ? Buffer.from('not a ZIP') : zip(problem === 'tampered member' ? [[member, Buffer.from('tampered')]]
+      : problem === 'oversized member' ? [[member, Buffer.concat([body, Buffer.from('x')])]]
       : problem === 'missing member' ? [['other.exe', body]] : problem === 'duplicate member' ? [[member, body], [member, body]]
       : [['TRIVY.EXE', body]]);
     await fs.writeFile(artifact, body); await fs.writeFile(archive, bytes);

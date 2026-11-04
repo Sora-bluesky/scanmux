@@ -102,8 +102,8 @@ component規則は通常どおり拒否します。ホストジョブのコン�
 終了0と、エンジンSHA256・predicate type・全証明書期待値に一致するJSONが必要です。
 GitHub-hosted runnerであることも照合します。
 
-ZIPに含まれるエンジンには、同じ証拠項目に`archive`と正確な`member`名を加える`sigstore-slsa-archive`を使えます。要求の`archive`はZIPの絶対パスで、台帳にはパスとSHA-256を保存します。`member`はファイル名、または`/`区切りの相対パスです。`..`、先頭の`/`、バックスラッシュは禁止し、大文字と小文字を区別します。
-既存のコピー予算でZIPを非公開の領域へコピーし、固定ハッシュを再確認してから、ZIP読取り処理で指定メンバーを読みます。そのSHA-256がエンジンの固定値と一致した場合だけ、`gh`でZIPのコピーを検証します。JSONにはZIPのSHA-256が必要で、predicateと証明書の照合は同じです。
+ZIPに含まれるエンジンには、同じ証拠項目に`archive`と正確な`member`名を加える`sigstore-slsa-archive`を使えます。要求の`archive`はZIPの絶対パスで、台帳にはパスとSHA-256を保存します。`member`はファイル名、または`/`区切りの相対パスです。`..`、先頭の`/`、バックスラッシュは禁止し、大文字と小文字を区別します。ZIP内の名前に非ASCIIバイトを含む場合は、UTF-8フラグが必要です。
+ZIPを非公開の領域へコピーし、固定ハッシュを再確認してから、ZIP読取り処理で指定メンバーを読みます。既存のコピー予算は実行許可の確認時に適用し、`engine-record`はどの証拠ファイルにもコピー予算を設定しません。全エントリーのヘッダーを検証し、選択したメンバーだけを、実行許可の確認時に予算へ計上済みのエンジンの非公開コピーのバイト数まで展開します。そのSHA-256がエンジンの固定値と一致した場合だけ、`gh`でZIPのコピーを検証します。JSONにはZIPのSHA-256が必要で、predicateと証明書の照合は同じです。
 ZIPの証明だけでは実行ファイルの証明になりません。ZIPの証明の検証と、メンバーとエンジンのハッシュ一致の両方が必要です。確認するのはバイト列の対応と設定した配布元の識別情報であり、エンジンの正しさ・鮮度・安全性は示しません。対応する形式はZIPだけです。
 
 更新を記録する要求を作ります。
@@ -139,7 +139,7 @@ ZIP用の要求では、`evidence`を`"kind":"sigstore-slsa-archive"`にし、`"
 `deps`以外では、最初の3つは`policy`の後に`"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}`のような情報を追加します。
 `provenance_ledger_mismatch`には`policy`も`engine`も追加しません。
 
-ZIPのメンバーの欠落・重複・ハッシュ不一致、またはZIPを解析できない場合は、`engine.reason`が`archive_member_mismatch`、状態が`invalid`になります。ZIPを読めない場合は`archive_unreadable`、固定ハッシュと異なる場合は`archive_changed`で、どちらも状態は`unverifiable`です。
+ZIPのメンバーの欠落・重複・サイズ超過・ハッシュ不一致、またはZIPを解析できない場合は、`engine.reason`が`archive_member_mismatch`、状態が`invalid`になります。実行許可の確認時にZIPを読めない場合は`archive_unreadable`、固定ハッシュと異なる場合は`archive_changed`で、どちらも状態は`unverifiable`です。`engine-record`では、ZIPの欠落はbundleの欠落と同じ一般的な入力エラーです。
 
 ネイティブコマンド、`job-scan`、`host-job-scan`でv2を適用します。
 ジョブのLinuxエンジンはmount前にホストで検証します。`serve`はschema 2を拒否します。
