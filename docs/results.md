@@ -392,7 +392,7 @@ This evaluation measures whether the OSV engine matches published dependency adv
 
 ### Selection, fixed before any scan
 
-From GitHub Advisory Database commit `d29f93b34c304df05cd3a23ea898c61ebb69d2ea`, select reviewed advisories published before 2026-10-01, not withdrawn, with exactly one ecosystem range having one introduced and one fixed event. The candidate counts were npm 8141, PyPI 10447 and Go 7026. Rank by SHA-256 of seed, ecosystem, package and advisory id, using seed `d29f93b34c304df05cd3a23ea898c61ebb69d2ea|scanmux-l06-v1`, with one case per package. Use the first 30 eligible cases per ecosystem. A case is ineligible when the fixed version is not a stable registry release or no affected stable version exists; scanner results played no part. The base is the highest stable version below the fix, and the head is the fix.
+From GitHub Advisory Database commit `d29f93b34c304df05cd3a23ea898c61ebb69d2ea`, select reviewed advisories published before 2026-10-01, not withdrawn, with exactly one ecosystem range having one introduced and one fixed event. The candidate counts were npm 8141, PyPI 10447 and Go 7026. Rank by SHA-256 of seed, ecosystem, package and advisory id, using seed `d29f93b34c304df05cd3a23ea898c61ebb69d2ea|scanmux-l06-v1`, with one case per package name as written. The comparison was case-sensitive, so PyPI `Django` and `django` count as two cases of one distribution, and PyPI covers 29 distinct packages. Use the first 30 eligible cases per ecosystem. A case is ineligible when the package is not found, the fixed version cannot be parsed or is not a stable registry release, or no affected stable version exists; scanner results played no part. The base is the highest stable version below the fix, and the head is the fix.
 
 ### Detection
 
@@ -423,7 +423,7 @@ The first 20 eligible cases each for npm and PyPI were attempted in rank order, 
 | No test, reason confirmed against the code | 6 | 10 |
 | No test, a route may have been missed | 1 | 2 |
 
-Common reasons for no test include behaviour needing a browser or a running server, a wheel unavailable for the job's Python 3.11, a fix outside the package or in a large bundle over the 2 MB limit used here, and a fix depending on a dependency that a stand-in would replace.
+Common reasons for no test include behaviour needing a browser or native server parts, a wheel unavailable for the job's Python 3.11, a fix outside the package or in a large bundle over the 2 MB limit used here, and a fix depending on a dependency that a stand-in would replace.
 
 Forty attempts are too few to give a per-language rate. Several of the 16 show only part of the chain: the first step of the defect, or small inputs rather than exhaustion. Some use stand-ins for code other than the fixed code. A reproduction proves nothing about the rest of the package.
 
