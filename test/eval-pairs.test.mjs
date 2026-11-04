@@ -69,7 +69,7 @@ test('the Python harness and oracle distinguish base, head, import failure and a
   try {
     t.mock.method(childProcess, 'spawnSync', (executable, args, options) => {
       assert.equal(executable, '/usr/bin/python3');
-      return run(python, args, { ...options, env: { ...options.env, PATH: process.env.PATH, SystemRoot: process.env.SystemRoot } });
+      return run(python, args, { ...options, env: { ...process.env, ...options.env } });
     }); syncBuiltinESMExports();
     for (const [revision, token, problem] of [['base', 'MARKER_WRITTEN', 'present'], ['head', 'CONSTRUCTOR_ERROR', 'absent'], ['broken', '', null], ['import', 'IMPORT_FAIL', null]]) {
       const projectRoot = path.join(root, revision), marker = path.join(projectRoot, 'marker');
