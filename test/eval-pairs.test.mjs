@@ -1,16 +1,130 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import childProcess from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { languages, materializePair, lockedVersion, vendoredVersion, totalBytes, buildRepo } from '../scripts/eval-pairs.mjs';
+import jsProbe from '../eval/pairs/js/test/test.mjs';
+import pythonProbe from '../eval/pairs/python/test/test.mjs';
 
 const manifestNames = new Set(['package.json', 'package-lock.json', 'requirements.txt', 'go.mod']);
 const differing = pair => [...pair.base.keys()].filter(name => {
   const a = pair.base.get(name), b = pair.head.get(name);
   return a === undefined || b === undefined || !a.equals(b);
+});
+
+function writeTree(root, files) {
+  for (const [name, bytes] of files) {
+    const target = path.join(root, name);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, bytes);
+  }
+}
+
+test('the JS oracle observes base and head but propagates unexpected template errors', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'scanmux-eval-js-'));
+  const pair = materializePair('js');
+  try {
+    for (const [revision, problem] of [['base', 'present'], ['head', 'absent']]) {
+      const projectRoot = path.join(root, revision);
+      writeTree(projectRoot, pair[revision]);
+      assert.deepEqual(await jsProbe({ projectRoot }), { kind: 'observed', problem });
+    }
+    const invalidVariable = 'Invalid `variable` option passed into `_.template`';
+    for (const [index, statement] of [
+      "throw new RangeError('unexpected template failure')",
+      `throw new TypeError(${JSON.stringify(invalidVariable)})`,
+      `throw new Error(${JSON.stringify(invalidVariable + ' unexpectedly')})`,
+    ].entries()) {
+      const projectRoot = path.join(root, `broken-${index}`);
+      writeTree(projectRoot, pair.head);
+      writeFileSync(path.join(projectRoot, 'vendor/lodash/template.js'), `module.exports = () => { ${statement}; };\n`);
+      await assert.rejects(() => jsProbe({ projectRoot }), /unexpected|Invalid/);
+    }
+    const projectRoot = path.join(root, 'no-marker');
+    writeTree(projectRoot, pair.head);
+    writeFileSync(path.join(projectRoot, 'vendor/lodash/template.js'), 'module.exports = () => () => {};\n');
+    await assert.rejects(() => jsProbe({ projectRoot }), /completed without the expected marker/);
+  } finally { delete globalThis.__scanmux_lodash_template_marker; rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the Python harness and oracle distinguish base, head, import failure and a broken loader', async t => {
+  const run = childProcess.spawnSync;
+  let python;
+  for (const candidate of process.platform === 'win32' ? ['python3', 'python'] : ['python3']) {
+    const result = run(candidate, ['-I', '-B', '-c', 'import sys; print(sys.version_info.major)'], { encoding: 'utf8', windowsHide: true });
+    if (result.error?.code === 'ENOENT') continue;
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, 'python3 must start successfully');
+    assert.equal(result.stdout.trim(), '3', 'the harness requires Python 3');
+    python = candidate; break;
+  }
+  if (!python) { t.skip('python3 is missing (including the Windows python executable)'); return; }
+  const root = mkdtempSync(path.join(tmpdir(), 'scanmux-eval-python-'));
+  const pair = materializePair('python');
+  try {
+    t.mock.method(childProcess, 'spawnSync', (executable, args, options) => {
+      assert.equal(executable, '/usr/bin/python3');
+      return run(python, args, { ...options, env: { ...process.env, SCANMUX_MARKER_PATH: options.env.SCANMUX_MARKER_PATH } });
+    }); syncBuiltinESMExports();
+    for (const [revision, token, problem] of [['base', 'MARKER_WRITTEN', 'present'], ['head', 'CONSTRUCTOR_ERROR', 'absent'], ['broken', '', null], ['import', 'IMPORT_FAIL', null]]) {
+      const projectRoot = path.join(root, revision), marker = path.join(projectRoot, 'marker');
+      writeTree(projectRoot, pair[revision === 'base' ? 'base' : 'head']);
+      if (revision === 'broken') writeFileSync(path.join(projectRoot, 'vendor/pyyaml/yaml/__init__.py'),
+        'class constructor:\n    class ConstructorError(Exception): pass\ndef full_load(document):\n    raise RuntimeError("broken loader")\n');
+      if (revision === 'import') writeFileSync(path.join(projectRoot, 'vendor/pyyaml/yaml/__init__.py'), 'raise ImportError("broken import")\n');
+      const result = run(python, ['-I', '-B', path.join(projectRoot, pair.testDirectory, 'run_yaml.py'), path.join(projectRoot, 'vendor/pyyaml'), path.join(projectRoot, pair.testDirectory, 'payload.yaml')],
+        { encoding: 'utf8', windowsHide: true, env: { ...process.env, SCANMUX_MARKER_PATH: marker } });
+      assert.ifError(result.error);
+      assert.equal(result.signal, null);
+      assert.equal(result.stdout.trim(), token, `${revision}: harness result`);
+      assert.equal(existsSync(marker), revision === 'base', `${revision}: marker presence`);
+      if (revision === 'broken') {
+        assert.notEqual(result.status, 0, 'an unexpected loader exception must fail the child');
+        await assert.rejects(() => pythonProbe({ projectRoot }));
+      } else {
+        assert.equal(result.status, 0, `${revision}: clean exit`);
+        if (problem) assert.deepEqual(await pythonProbe({ projectRoot }), { kind: 'observed', problem });
+        else assert.deepEqual(await pythonProbe({ projectRoot }), { kind: 'environment_missing', reason: 'fixture_missing' });
+      }
+    }
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the Python oracle requires a clean child and a consistent result token and marker', async t => {
+  const projectRoot = fileURLToPath(new URL('../eval/pairs/python/base/', import.meta.url));
+  const failures = [
+    { status: 1 }, { status: 1, stdout: 'CONSTRUCTOR_ERROR\n' }, { status: 1, stdout: 'IMPORT_FAIL\n' },
+    { status: null, signal: 'SIGTERM' }, { error: Object.assign(new Error('spawn refused'), { code: 'EACCES' }) },
+    { stdout: '' }, { stdout: 'LOAD_ERROR\n' }, { stdout: 'noise CONSTRUCTOR_ERROR\n' },
+    { stdout: 'MARKER_WRITTEN\n' }, { stdout: 'MARKER_WRITTEN\n', marker: 'wrong' },
+    { stdout: 'CONSTRUCTOR_ERROR\n', marker: '' }, { stdout: 'CONSTRUCTOR_ERROR\n', marker: '73' },
+    { status: 1, stdout: 'MARKER_WRITTEN\n', marker: '73' },
+  ];
+  let child;
+  try {
+    t.mock.method(childProcess, 'spawnSync', (_executable, _args, options) => {
+      if (child.marker !== undefined) writeFileSync(options.env.SCANMUX_MARKER_PATH, child.marker);
+      return { status: 0, signal: null, stdout: '', ...child };
+    }); syncBuiltinESMExports();
+    for (const failure of failures) {
+      child = failure;
+      await assert.rejects(() => pythonProbe({ projectRoot }), `must reject ${JSON.stringify(failure)}`);
+    }
+    for (const [result, observation] of [
+      [{ stdout: 'MARKER_WRITTEN\n', marker: '73' }, { kind: 'observed', problem: 'present' }],
+      [{ stdout: 'CONSTRUCTOR_ERROR\n' }, { kind: 'observed', problem: 'absent' }],
+      [{ stdout: 'IMPORT_FAIL\n' }, { kind: 'environment_missing', reason: 'fixture_missing' }],
+      [{ error: Object.assign(new Error('missing python'), { code: 'ENOENT' }) }, { kind: 'environment_missing', reason: 'runtime_not_available' }],
+    ]) {
+      child = result;
+      assert.deepEqual(await pythonProbe({ projectRoot }), observation);
+    }
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
 test('every pair keeps the same file set at base and head', () => {

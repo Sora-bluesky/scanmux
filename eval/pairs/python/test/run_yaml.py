@@ -6,7 +6,9 @@ by SCANMUX_MARKER_PATH, never a shell command. 5.3.1 executes it; 5.4 rejects th
 python/object/new tag with a ConstructorError. Output is a single protocol line so
 the Node oracle can tell an unusable library apart from the absent/present signal.
 """
+import os
 import sys
+from pathlib import Path
 
 
 def main():
@@ -21,10 +23,12 @@ def main():
         document = handle.read()
     try:
         yaml.full_load(document)
-    except Exception:
-        print("LOAD_ERROR")
+    except yaml.constructor.ConstructorError:
+        print("CONSTRUCTOR_ERROR")
         return
-    print("LOADED")
+    if Path(os.environ["SCANMUX_MARKER_PATH"]).read_text(encoding="ascii").strip() != "73":
+        raise RuntimeError("payload did not write the expected marker")
+    print("MARKER_WRITTEN")
 
 
 if __name__ == "__main__":

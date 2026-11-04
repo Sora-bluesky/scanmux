@@ -19,6 +19,15 @@ in-process marker, the PyYAML test writes a marker value to a temporary file;
 neither runs a shell command. The vendored dependency is the minimal set of files
 the test needs at that version, with its license.
 
+The lodash oracle reports absence only for the exact invalid-variable `Error`
+thrown by 4.17.21. A completed template with the marker reports presence;
+one without it throws and is recorded as a failure. The PyYAML harness
+distinguishes a written marker, `yaml.constructor.ConstructorError`,
+and an import failure with separate stdout tokens. Its oracle requires a clean
+exit and the expected marker for presence, or a clean constructor-error result
+with no marker for absence. Missing runtimes or imports are environment failures;
+unexpected exceptions, signals and other child failures are not observations.
+
 ## 1. Build the throwaway repositories
 
 `eval-pairs.mjs` assembles each pair into a fresh git repository, commits base,

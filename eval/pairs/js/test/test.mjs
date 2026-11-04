@@ -18,9 +18,13 @@ export default async function ({ projectRoot }) {
   delete globalThis[marker];
   try {
     template('', { variable: `data = (globalThis[${JSON.stringify(marker)}] = 73)` })();
-  } catch {
+  } catch (error) {
     // 4.17.21 refuses the option before compiling, so the marker never runs.
-    return { kind: 'observed', problem: 'absent' };
+    if (error instanceof Error && error.constructor === Error && error.message === 'Invalid `variable` option passed into `_.template`') {
+      return { kind: 'observed', problem: 'absent' };
+    }
+    throw error;
   }
-  return { kind: 'observed', problem: globalThis[marker] === 73 ? 'present' : 'absent' };
+  if (globalThis[marker] !== 73) throw new Error('Template completed without the expected marker');
+  return { kind: 'observed', problem: 'present' };
 }

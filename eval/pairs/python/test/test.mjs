@@ -20,10 +20,18 @@ export default async function ({ projectRoot }) {
   try {
     const result = spawnSync(python, ['-I', '-B', path.join(here, 'run_yaml.py'), packageDir, path.join(here, 'payload.yaml')],
       { encoding: 'utf8', env: { SCANMUX_MARKER_PATH: markerPath, PATH: '/usr/bin:/bin' }, windowsHide: true });
-    if (result.error && result.error.code === 'ENOENT') return { kind: 'environment_missing', reason: 'runtime_not_available' };
-    if ((result.stdout ?? '').includes('IMPORT_FAIL')) return { kind: 'environment_missing', reason: 'fixture_missing' };
-    const marker = existsSync(markerPath) ? readFileSync(markerPath, 'ascii').trim() : '';
-    return { kind: 'observed', problem: marker === '73' ? 'present' : 'absent' };
+    if (result.error) {
+      if (result.error.code === 'ENOENT') return { kind: 'environment_missing', reason: 'runtime_not_available' };
+      throw result.error;
+    }
+    if (result.signal || result.status !== 0) throw new Error('Python probe did not exit cleanly');
+    const outcome = (result.stdout ?? '').trim();
+    if (outcome === 'IMPORT_FAIL') return { kind: 'environment_missing', reason: 'fixture_missing' };
+    const hasMarker = existsSync(markerPath);
+    const marker = hasMarker ? readFileSync(markerPath, 'ascii').trim() : '';
+    if (outcome === 'MARKER_WRITTEN' && marker === '73') return { kind: 'observed', problem: 'present' };
+    if (outcome === 'CONSTRUCTOR_ERROR' && !hasMarker) return { kind: 'observed', problem: 'absent' };
+    throw new Error('Python probe returned an invalid result');
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
