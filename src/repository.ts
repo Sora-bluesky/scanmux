@@ -39,7 +39,7 @@ async function checkMetadata(root: string, acquiredCommit?: string): Promise<voi
   const worktreeConfig = path.join(gitDir, 'config.worktree');
   if (await exists(worktreeConfig)) await checkGitConfig(worktreeConfig);
 }
-// These identity, push and branch-management keys are inert for rev-parse, status,
+// These identity, push-only, git-lfs and branch-management keys are inert for rev-parse, status,
 // ls-tree, cat-file and merge-base. Recheck this policy when adding Git commands.
 const gitConfigPolicy: Record<string, RegExp | null> = {
   'core.repositoryformatversion': /^0$/, 'core.bare': /^false$/i,
@@ -48,6 +48,7 @@ const gitConfigPolicy: Record<string, RegExp | null> = {
   'extensions.worktreeconfig': /^(true|false)$/i,
   'user.name': null, 'user.email': null, 'user.signingkey': null, 'user.useconfigonly': null,
   'push.default': null, 'push.followtags': null, 'push.autosetupremote': null,
+  'lfs.access': null, 'remote.pushurl': null, 'url.pushinsteadof': null,
   'branch.description': null, 'branch.rebase': null, 'branch.pushremote': null, 'branch.vscode-merge-base': null,
   // Every target invocation through gitExit overrides these four settings.
   'core.hookspath': null, 'core.fsmonitor': null, 'core.attributesfile': null, 'core.excludesfile': null,

@@ -330,6 +330,7 @@ test('worktree and main configs reject the same keys and invalid values with bou
     ['[core]\nsafecrlf = input\n', 'core.safecrlf'], ['[core]\neol = auto\n', 'core.eol'],
     ['[user]\nunknown = unsafe\n', 'user.unknown'], ['[push]\nunknown = unsafe\n', 'push.unknown'],
     ['[branch "test"]\nunknown-2 = unsafe\n', 'branch.unknown-2'],
+    ['[url "git@example.invalid:"]\ninsteadOf = unsafe\n', 'url.insteadof'],
   ]) {
     const errors: string[][] = [];
     for (const file of ['config', 'config.worktree']) {
@@ -337,7 +338,7 @@ test('worktree and main configs reject the same keys and invalid values with bou
       const plan: Plan = await f.repo.buildPlan(f.root, f.config, f.workspace);
       errors.push(plan.blockers); await fs.writeFile(path.join(f.root, '.git', file), '[core]\nrepositoryformatversion = 0\nbare = false\n');
     }
-    assert.deepEqual(errors, [[`unsupported_git_config:${key}`], [`unsupported_git_config:${key}`]], value);
+    assert.deepEqual(errors, [[`unsupported_git_config:${key}`], [`unsupported_git_config:${key}`]], key);
   }
 });
 
@@ -346,6 +347,8 @@ test('each exact inert, overridden and EOL key is accepted in either config with
   const settings = [
     ['user', 'name', 'Fixture'], ['user', 'email', 'fixture@example.invalid'], ['user', 'signingkey', 'inert'], ['user', 'useconfigonly', 'true'],
     ['push', 'default', 'simple'], ['push', 'followtags', 'true'], ['push', 'autosetupremote', 'true'],
+    ['lfs "https://example.invalid/repo.git/info/lfs"', 'access', 'basic'], ['remote "origin"', 'pushurl', 'unused'],
+    ['url "git@example.invalid:"', 'pushinsteadof', 'unused'],
     ['branch "topic"', 'description', 'inert'], ['branch "topic"', 'rebase', 'true'], ['branch "topic"', 'pushremote', 'origin'], ['branch "topic"', 'vscode-merge-base', f.base],
     ['core', 'hookspath', 'unused'], ['core', 'fsmonitor', 'unused'], ['core', 'attributesfile', 'unused'], ['core', 'excludesfile', 'unused'],
     ...['false', 'true', 'input'].map(value => ['core', 'autocrlf', value]), ...['false', 'true', 'warn'].map(value => ['core', 'safecrlf', value]),

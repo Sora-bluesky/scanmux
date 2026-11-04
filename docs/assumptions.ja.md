@@ -222,7 +222,7 @@ ACL 設定の PowerShell、`runner-check` の後始末の `taskkill`、`runner-c
 対象の `.git/config` と `.git/config.worktree` には同じ許可方針を適用し、未指定のキーは拒否します。セクション名と変数名の大文字・小文字は区別しません。
 
 - 従来のキー：`core.repositoryformatversion`（`0`のみ）、`core.bare`（`false`のみ）、`core.filemode`、`core.logallrefupdates`、`core.symlinks`、`core.ignorecase`、`remote.<name>.url`、`remote.<name>.fetch`、`branch.<name>.remote`、`branch.<name>.merge`、`extensions.worktreeconfig`（`true|false`のみ）。
-- 検査中に参照しない情報：`user.name`、`user.email`、`user.signingkey`、`user.useconfigonly`、`push.default`、`push.followtags`、`push.autosetupremote`、`branch.<name>.description`、`.rebase`、`.pushremote`、`.vscode-merge-base`。検査では、これらを読むコミット・署名・push・rebase・エディターの操作を行いません。
+- 検査中に参照しない情報：`user.name`、`user.email`、`user.signingkey`、`user.useconfigonly`、`push.default`、`push.followtags`、`push.autosetupremote`、`lfs.<url>.access`、`remote.<name>.pushurl`、`url.<base>.pushinsteadof`、`branch.<name>.description`、`.rebase`、`.pushremote`、`.vscode-merge-base`。検査では、これらを読むコミット・署名・push・git-lfs・rebase・エディターの操作を行いません。
 - 強制上書きする設定：`core.hookspath`、`core.fsmonitor`、`core.attributesfile`、`core.excludesfile`。対象へのすべてのGit呼出しで非公開の場所または無効な値へ上書きするため、設定されたフック・監視コマンド・外部ファイルは使いません。
 - 値を検証する改行設定：`core.autocrlf=false|true|input`、`core.safecrlf=false|true|warn`、`core.eol=lf|crlf|native`。`status`では有効なままにするため、CRLFの作業ファイルがLFのコミット済みblobと異なっても、Gitでは変更なしと判定する場合があります。スナップショットには常にコミット済みblobを使います。
 

@@ -215,7 +215,7 @@ It runs with system and global configuration disabled, hooks redirected to a pri
 The same deny-by-default policy applies to the target's `.git/config` and `.git/config.worktree` (section and variable names are case-insensitive):
 
 - Existing keys: `core.repositoryformatversion` (only `0`), `core.bare` (only `false`), `core.filemode`, `core.logallrefupdates`, `core.symlinks`, `core.ignorecase`, `remote.<name>.url`, `remote.<name>.fetch`, `branch.<name>.remote`, `branch.<name>.merge`, and `extensions.worktreeconfig` (only `true|false`).
-- Inert metadata: `user.name`, `user.email`, `user.signingkey`, `user.useconfigonly`, `push.default`, `push.followtags`, `push.autosetupremote`, and `branch.<name>.description`, `.rebase`, `.pushremote`, `.vscode-merge-base`. No commit, signing, push, rebase or editor operation reads these keys during scanning.
+- Inert metadata: `user.name`, `user.email`, `user.signingkey`, `user.useconfigonly`, `push.default`, `push.followtags`, `push.autosetupremote`, `lfs.<url>.access`, `remote.<name>.pushurl`, `url.<base>.pushinsteadof`, and `branch.<name>.description`, `.rebase`, `.pushremote`, `.vscode-merge-base`. No commit, signing, push, git-lfs, rebase or editor operation reads these keys during scanning.
 - Overridden settings: `core.hookspath`, `core.fsmonitor`, `core.attributesfile`, `core.excludesfile`. Every target Git invocation forces private or disabled values, so the configured hooks, monitor and external files are not used.
 - Validated conversion settings: `core.autocrlf=false|true|input`, `core.safecrlf=false|true|warn`, `core.eol=lf|crlf|native`. They remain effective for `status`; a Git-clean CRLF checkout may differ from the committed LF blobs. Snapshots always contain committed blobs.
 
