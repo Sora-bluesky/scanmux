@@ -17,7 +17,7 @@ A separate `ai-plan` / `ai-scan` workflow connects Windows to an isolated Linux 
 It requires exact plan acceptance, prepared pinned assets, dedicated credentials and verified runtime boundaries.
 Development evidence uses synthetic responses, not real Blue inference.
 
-## Scope of v0.1.0
+## Scope of v0.2.0
 
 For JS/TS (`npm`), Python (`PyPI`) and Go (`Go`), support means reading these inputs,
 running offline OSV dependency checks, Gitleaks secret checks and explicitly accepted AI checks.
@@ -52,7 +52,7 @@ The following are outside this scope:
 
 | Item | Boundary |
 |---|---|
-| Real Linux host measurement and stopping | This resource workflow has only been verified on Windows with Docker Desktop's Linux engine. |
+| Real Linux host measurement and stopping | This resource workflow is verified on Windows with Docker Desktop's Linux engine and, in CI, on GitHub-hosted `ubuntu-24.04` (native supervisor suite and large job scans). Other Linux hosts are not verified. |
 | macOS support | The test suite runs on macOS in CI. Job commands and the AI runner remain unsupported. Targets under a symlinked ancestor, such as macOS `/tmp` or `/var`, are refused with `linked_path`. |
 | Physical disk quota | ScanMux estimates registered job data and stops on excess. Sampling can miss growth. ScanMux does not change OS settings. |
 | Publisher checks without upstream evidence | A v2 policy can verify supplied OSV-Scanner Sigstore/SLSA evidence offline through `gh`. ZIP evidence (`sigstore-slsa-archive`) requires both a verified ZIP attestation and an exact member-to-engine SHA-256 match; a ZIP attestation alone never proves the executable. The [Trivy Windows x64 ZIP](docs/trivy.md) can be verified this way. This proves the configured publisher identity and byte relationship, not correctness, freshness or safety. Gitleaks 8.30.1 publishes no signature evidence and is always refused at `publisher`. Git for Windows, container components, images and the asset manifest cannot be publisher-verified offline. `gh` is pinned, not self-verified. Local SHA-256/version pins alone do not verify a publisher. |
@@ -63,7 +63,7 @@ The following are outside this scope:
 | Cleanup ancestor race | A process running as the same user can swap an ancestor for a junction during removal. |
 | Parent ACL changes | A process running as the same user, as owner, can widen the parent ACL after the first full check in a process. |
 | First workspace creation | The first workspace in a process is created before the parent ACL check, leaving a race window for a process running as the same user. Nothing is written into that workspace if the check fails. |
-| Quality evaluation size | The v0.1.0 quality evaluation covers one vulnerable/fixed pair per supported language (JS/TS, Python, Go), not a large corpus. The Go pair has scanner-only evidence because the reproduction job cannot run a compiled binary. |
+| Quality evaluation size | The evaluation covers three smoke pairs plus the 90-advisory dependency evaluation in [docs/results.md](docs/results.md), which measures matching and is not a general detection rate. The Go pair has scanner-only evidence because the reproduction job cannot run a compiled binary. |
 | Release artifact verification | Release artifacts include a CycloneDX SBOM and GitHub build provenance attestations for the package and SBOM. Verify each with `gh attestation verify PATH/TO/ARTIFACT --repo OWNER/REPO`. |
 
 ## What it does

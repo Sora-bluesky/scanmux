@@ -8,9 +8,9 @@ The Japanese version, [assumptions.ja.md](assumptions.ja.md), is authoritative. 
 
 Each statement describes the code at the date in the change history at the end.
 
-## Scope of v0.1.0
+## Scope of v0.2.0
 
-See [Scope of v0.1.0 in the README](../README.md#scope-of-v010) for supported language inputs, urgent-advisory checks and exclusions. Support describes the available checks, not a guarantee of completion; the result meanings and trust assumptions below still apply.
+See [Scope of v0.2.0 in the README](../README.md#scope-of-v020) for supported language inputs, urgent-advisory checks and exclusions. Support describes the available checks, not a guarantee of completion; the result meanings and trust assumptions below still apply.
 
 ## What a result means
 
