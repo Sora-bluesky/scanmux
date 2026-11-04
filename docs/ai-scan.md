@@ -147,6 +147,20 @@ Reports keep resource observations and the worker's final exit/OOM state from be
 SDK failures stay errors when only message text or a concurrent resource observation suggests a full disk. For the pinned SDK's initial Python scan registration, ScanMux can retain a native SQLite FULL exception and verify that it caused the child to exit.
 A disk-capacity stop also requires verified invocation, worker integrity, SDK cleanup and host termination. Mixed errors, a different terminal exception, missing observations and later SDK phases keep their original classification. The optional `runtime.sdkInitializationObservation` records this bounded evidence without SQL, error messages or stack traces. Not every SDK capacity failure is identified; direct worker errors, host-observed OOM and deadlines remain separate evidence paths.
 
+On a GitHub-hosted `ubuntu-24.04` runner with SDK 0.5.1, no network or provider call, and filesystems with no free blocks, the results were:
+
+| SDK path | Filesystem | SQLite result in the child | ScanMux result |
+|---|---|---|---|
+| Initial `register-cli-scan`, new database | tmpfs | `SQLITE_FULL` | `resource_disk_exceeded` when the conditions above hold |
+| Other workbench commands, existing database | tmpfs | `SQLITE_IOERR_SHMSIZE` | No capacity cause |
+| All workbench commands, including `register-cli-scan` | ext4 | `SQLITE_CANTOPEN` | No capacity cause |
+
+The other workbench commands measured were `get-cli-scan-resume`, `get-scan`, `get-scan-feedback`, `set-scan-thread`, `set-scan-cost-limit`, `prepare-scan-completion`, `finalize-scan-usage` and `fail-scan`. Even reads fail because each command opens the database and applies migrations.
+
+ScanMux does not treat `SQLITE_IOERR_SHMSIZE` or `SQLITE_CANTOPEN` as a disk-capacity cause because these codes also have other causes. When these failures end the SDK run, they keep their stage code, such as `worker_sdk_initialization_failed` or `worker_sdk_finalization_failed`. The SDK's own error chain carried no native error code: every `code` was null. The workbench failure reaches Node only as exit status and text.
+
+Not measured: other filesystems, a filesystem with free blocks but no inodes, the SDK's own Node writes, MCP paths, a live provider run and memory limits.
+
 ### Migrate older AI configurations
 
 These limits cover the Linux worker and its descendants.
