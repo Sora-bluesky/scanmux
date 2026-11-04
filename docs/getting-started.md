@@ -45,6 +45,18 @@ node bin/scanmux.mjs --help
 
 Successful checks finish without errors. The final command prints the CLI help.
 
+You can also install a downloaded release tarball into a separate consumer directory:
+
+```sh
+npm install --prefix /absolute/consumer --ignore-scripts --omit=dev --no-audit --no-fund "/absolute/scanmux-<version>.tgz"
+/absolute/consumer/node_modules/.bin/scanmux --version
+/absolute/consumer/node_modules/.bin/scanmux deps /absolute/committed-repository --config /absolute/config.json --json
+```
+
+On Windows, invoke `scanmux.cmd` in that `.bin` directory. Prepare the pinned tools, offline database and configuration below first.
+Release CI installs the actual tarball and checks `--version` and completed offline dependency analysis of a committed npm fixture.
+This check does not establish installed AI-runner or release-transparency verification support.
+
 ### 2. Prepare a recorded offline database
 
 From a source checkout, download the selected official OSV databases to a new absolute path outside every scan target.
@@ -341,7 +353,7 @@ Saved-record checks catch a result being applied to the wrong finding or test by
 Any `not_verified` result returns INCOMPLETE/3 regardless of the original report's gate or the supporting/required setting; integrity violations and existing execution errors return ERROR/4. The original report is never rewritten.
 The profile's retained budget covers the whole bundle; execution limits remain per job. Runtime/source copies are removed; the private verification bundle remains. Whole-command time and physical storage are not guaranteed.
 
-v0.2.0 leaves out generated tests or patches, newly added/edited tests between base and head, semantic test-strength or suite-wide weakening analysis, framework discovery, builds/installation, online prerequisites, other runtimes, Trivy selection, automatic dispositions/report rewrites, head-wide safety verdicts, imported runtime evidence, retries/resume, caches, batch/web/SDK/host-job execution.
+v0.2.1 leaves out generated tests or patches, newly added/edited tests between base and head, semantic test-strength or suite-wide weakening analysis, framework discovery, builds/installation, online prerequisites, other runtimes, Trivy selection, automatic dispositions/report rewrites, head-wide safety verdicts, imported runtime evidence, retries/resume, caches, batch/web/SDK/host-job execution.
 
 ## Related docs
 

@@ -80,3 +80,11 @@ test('Linux job source archive holds every job runtime file', async () => {
   const roots = new Set(`${archived[1]} ${archived[2]}`.trim().split(/\s+/));
   for (const file of jobRuntimeFiles) assert.ok(roots.has(file.split('/')[0]), file);
 });
+
+test('real job scenarios run the packed installed tree and preserve runtime asset verification', async () => {
+  const harness = await readFile('scripts/ci-linux-job-harness.mjs', 'utf8');
+  assert.match(harness, /\(\{ app: installedApp \} = await installPackage\(packageDirectory\)\)/);
+  assert.match(harness, /path\.join\(installedApp, 'bin\/scanmux\.mjs'\)/);
+  assert.match(harness, /path\.join\(installedApp, 'bin\/typescript-bootstrap\.mjs'\)/);
+  assert.match(harness, /path\.join\(installedApp, 'src\/job-records\.ts'\)/);
+});

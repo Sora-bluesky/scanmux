@@ -39,26 +39,37 @@ async function checkMetadata(root: string, acquiredCommit?: string): Promise<voi
   const worktreeConfig = path.join(gitDir, 'config.worktree');
   if (await exists(worktreeConfig)) await checkGitConfig(worktreeConfig);
 }
+// These identity, push-only, git-lfs and branch-management keys are inert for rev-parse, status,
+// ls-tree, cat-file and merge-base. Recheck this policy when adding Git commands.
+const gitConfigPolicy: Record<string, RegExp | null> = {
+  'core.repositoryformatversion': /^0$/, 'core.bare': /^false$/i,
+  'core.filemode': null, 'core.logallrefupdates': null, 'core.symlinks': null, 'core.ignorecase': null,
+  'remote.url': null, 'remote.fetch': null, 'branch.remote': null, 'branch.merge': null,
+  'extensions.worktreeconfig': /^(true|false)$/i,
+  'user.name': null, 'user.email': null, 'user.signingkey': null, 'user.useconfigonly': null,
+  'push.default': null, 'push.followtags': null, 'push.autosetupremote': null,
+  'lfs.access': null, 'remote.pushurl': null, 'url.pushinsteadof': null,
+  'branch.description': null, 'branch.rebase': null, 'branch.pushremote': null, 'branch.vscode-merge-base': null,
+  // Every target invocation through gitExit overrides these four settings.
+  'core.hookspath': null, 'core.fsmonitor': null, 'core.attributesfile': null, 'core.excludesfile': null,
+  // Keep conversion settings effective for status; snapshots read committed blobs.
+  'core.autocrlf': /^(false|true|input)$/i, 'core.safecrlf': /^(false|true|warn)$/i, 'core.eol': /^(lf|crlf|native)$/i,
+};
 async function checkGitConfig(file: string): Promise<void> {
   const configPath = await canonical(file);
   const raw = await readFile(configPath, 'utf8');
   if (raw.length > 65536) throw new SafeError('unsupported_git_config');
   let section = '';
-  const allowed: Record<string, Set<string>> = {
-    core: new Set(['repositoryformatversion', 'filemode', 'bare', 'logallrefupdates', 'symlinks', 'ignorecase']),
-    remote: new Set(['url', 'fetch']), branch: new Set(['remote', 'merge']),
-    extensions: new Set(['worktreeconfig']),
-  };
   for (const line of raw.split(/\r?\n/)) {
     const text = line.trim();
     if (!text || /^[#;]/.test(text)) continue;
-    const heading = /^\[(core|remote|branch|extensions)(?: "[^"\r\n]+")?\]$/i.exec(text);
+    const heading = /^\[([a-z0-9-]+)(?: "[^"\r\n]+")?\]$/i.exec(text);
     if (heading) { section = heading[1].toLowerCase(); continue; }
-    const setting = /^([a-z]+)\s*=\s*([^\r\n]*)$/i.exec(text);
-    if (!setting || !allowed[section]?.has(setting[1].toLowerCase()) || /\\$/.test(text)) throw new SafeError('unsupported_git_config');
-    if (setting[1].toLowerCase() === 'repositoryformatversion' && setting[2] !== '0') throw new SafeError('unsupported_git_format');
-    if (setting[1].toLowerCase() === 'bare' && setting[2].toLowerCase() !== 'false') throw new SafeError('bare_git_unsupported');
-    if (setting[1].toLowerCase() === 'worktreeconfig' && !/^(true|false)$/i.test(setting[2])) throw new SafeError('unsupported_git_config');
+    const setting = /^([a-z][a-z0-9-]*)\s*=\s*([^\r\n]*)$/i.exec(text);
+    if (!section || !setting) throw new SafeError('unsupported_git_config');
+    const variable = setting[1].toLowerCase(), key = `${section}.${variable}`;
+    const code = section.length <= 64 && variable.length <= 64 ? `unsupported_git_config:${key}` : 'unsupported_git_config';
+    if (!Object.hasOwn(gitConfigPolicy, key) || /\\$/.test(text) || gitConfigPolicy[key] && !gitConfigPolicy[key]!.test(setting[2])) throw new SafeError(code);
   }
 }
 async function gitExit(root: string, config: Config, workspace: string, args: string[], signal?: AbortSignal,

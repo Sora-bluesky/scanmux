@@ -17,7 +17,7 @@ A separate `ai-plan` / `ai-scan` workflow connects Windows to an isolated Linux 
 It requires exact plan acceptance, prepared pinned assets, dedicated credentials and verified runtime boundaries.
 Development evidence uses synthetic responses, not real Blue inference.
 
-## Scope of v0.2.0
+## Scope of v0.2.1
 
 For JS/TS (`npm`), Python (`PyPI`) and Go (`Go`), support means reading these inputs,
 running offline OSV dependency checks, Gitleaks secret checks and explicitly accepted AI checks.

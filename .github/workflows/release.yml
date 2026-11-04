@@ -61,6 +61,8 @@ jobs:
           npm pack --ignore-scripts --pack-destination dist
           test -f "dist/scanmux-$VERSION.tgz"
           npm sbom --sbom-format cyclonedx > "dist/scanmux-$VERSION.cdx.json"
+      - name: Verify the installed package
+        run: node scripts/ci-installed-package.mjs --tgz "dist/scanmux-$VERSION.tgz"
       - name: Attest the build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -147,6 +149,8 @@ jobs:
           npm pack --ignore-scripts --pack-destination dist
           test -f "dist/scanmux-$VERSION.tgz"
           npm sbom --sbom-format cyclonedx > "dist/scanmux-$VERSION.cdx.json"
+      - name: Verify the installed package
+        run: node scripts/ci-installed-package.mjs --tgz "dist/scanmux-$VERSION.tgz"
       - name: Attest the build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

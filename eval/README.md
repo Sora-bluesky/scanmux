@@ -50,9 +50,13 @@ with the same `-c core.autocrlf=false -c core.attributesFile=` shown below. A
 plain `git checkout` under a global `core.autocrlf=true` (the Git for Windows
 default) rewrites the changed files with CRLF, and `job-scan`, which runs git
 without your global config, then refuses the repository with
-`dirty_worktree_unsupported`. Do not set `core.autocrlf` in the pair's own
-`.git/config` instead: `job-scan` refuses keys outside its allowlist with
-`unsupported_git_config`. If a checkout already wrote CRLF, rebuild the pair.
+`dirty_worktree_unsupported`. The pair's own `.git/config` may set
+`core.autocrlf=false|true|input`; `job-scan` preserves it for status checks but
+scans committed blobs. Keep `false` for the byte-identical evaluation procedure.
+Other keys outside the [accepted policy](../docs/assumptions.md) are refused with
+`unsupported_git_config:<section>.<variable>` (plain `unsupported_git_config`
+for malformed or oversized identifiers). If a checkout already wrote CRLF,
+rebuild the pair or restore it with the matching conversion setting.
 
 ## 2. Fetch the offline OSV databases
 

@@ -17,7 +17,7 @@ import { JobDisk, jobDiskPollMs, withJobDisk } from '../src/job-disk.ts';
 import * as channel from '../internal/job-channel.mjs';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const driver = (await readFile('internal/reproduction-driver.mjs', 'utf8')).replace(/^import .*;\n/gm, '')
+const driver = (await readFile('internal/reproduction-driver.mjs', 'utf8')).replace(/^import .*;\n|^const \{.*\} = await import\('.*'\);\n/gm, '')
   .replace('await import(pathToFileURL(path.join(process.argv[2], directory, \'test.mjs\')).href)', 'await loadProbe()');
 for (const [name, observation, expected] of [
   ['positive', { kind: 'observed', problem: 'present' }, { kind: 'completed', outcome: 'reproduced' }],
@@ -44,7 +44,7 @@ test('probe driver echoes the admitted digest even if the oracle edits its argum
   assert.deepEqual(JSON.parse(writes[0]), { schema: 'scanmux.probe-completion/v1', bindingDigest, result: { kind: 'completed', outcome: 'reproduced' } });
 });
 
-const controller = (await readFile('internal/linux-job-controller.mjs', 'utf8')).replace(/^import .*;\n/gm, '');
+const controller = (await readFile('internal/linux-job-controller.mjs', 'utf8')).replace(/^import .*;\n|^const \{.*\} = await import\('.*'\);\n/gm, '');
 async function runController(scenario, copyBudgetBytes) {
   const commit = 'a'.repeat(40), head = 'b'.repeat(40), root = '/source', mappedRoot = '/repo/' + hash(root), file = { path: 'tests/repro/test.mjs', mode: ['executable', 'mode_missing_execute', 'mode_mutation'].includes(scenario) ? '100755' : '100644', bytes: 10, sha256: hash('oracle') };
   const config = { ...structuredClone(defaults), maxOutputBytes: 65536, tools: { git: { path: '/usr/bin/git', version: '2.54.0', sha256: 'c'.repeat(64) }, gitleaks: { path: '/tools/gitleaks', version: '8.30.1', sha256: 'd'.repeat(64) } } };

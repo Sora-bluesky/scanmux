@@ -45,6 +45,18 @@ node bin/scanmux.mjs --help
 
 検証が成功するとエラーなく終了し、最後のコマンドがCLIのヘルプを表示します。
 
+取得したリリースのtarballを、別の導入用ディレクトリへインストールすることもできます。
+
+```sh
+npm install --prefix /absolute/consumer --ignore-scripts --omit=dev --no-audit --no-fund "/absolute/scanmux-<version>.tgz"
+/absolute/consumer/node_modules/.bin/scanmux --version
+/absolute/consumer/node_modules/.bin/scanmux deps /absolute/committed-repository --config /absolute/config.json --json
+```
+
+Windowsでは、その`.bin`ディレクトリの`scanmux.cmd`を呼び出します。先に、後述の固定ツール、オフラインDB、設定を用意してください。
+リリースCIでは実際のtarballを導入し、`--version`と、commit済みnpm fixtureのオフライン依存分析の完了を確認します。
+この検査は、導入後のAI runnerやリリース透明性の検証への対応を実証するものではありません。
+
 ### 2. 取得記録付きのオフラインDBを用意する
 
 ソースの作業環境で、選んだ公式OSV DBを全検査対象の外にある新しい絶対パスへ取得します。
@@ -334,7 +346,7 @@ baseでの再現を記録し、同じテスト・実行環境のheadで再現せ
 `not_verified`の場合は、元レポートの判定や補助・必須の指定にかかわらずINCOMPLETE/3を返します。整合性違反や既存の実行エラーはERROR/4です。元レポートは書き換えません。
 論理保存容量は結果一式で共有し、実行制限はジョブごとに適用します。実行用ソースコピーは削除し、検証結果だけを非公開で残します。コマンド全体の所要時間や物理保存容量の保証はありません。
 
-v0.2.0では、テスト・パッチの生成、baseとheadの間でのテスト追加・変更、テストの強さやテスト群全体の弱体化の意味的判定、フレームワーク検出、build・依存導入、オンライン前提、別runtime、Trivyの指摘選択、自動disposition・レポート書換え、head全体の安全判定、過去の実行証拠の取込み、再試行・再開、cache、batch・Web・SDK・host-job経路には対応しません。
+v0.2.1では、テスト・パッチの生成、baseとheadの間でのテスト追加・変更、テストの強さやテスト群全体の弱体化の意味的判定、フレームワーク検出、build・依存導入、オンライン前提、別runtime、Trivyの指摘選択、自動disposition・レポート書換え、head全体の安全判定、過去の実行証拠の取込み、再試行・再開、cache、batch・Web・SDK・host-job経路には対応しません。
 
 ## 関連文書
 

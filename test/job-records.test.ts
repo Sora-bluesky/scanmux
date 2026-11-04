@@ -135,6 +135,17 @@ test('uncertain native batch failure counts every possible tail and never retrie
   } finally { await f.close(); }
 });
 
+test('job records accept bounded Git config diagnostics without changing the code', async () => {
+  const f = await fixture();
+  try {
+    const codes = ['unsupported_git_config:core.sshcommand', 'unsupported_git_config:branch.unknown-2',
+      `unsupported_git_config:${'s'.repeat(64)}.${'k'.repeat(64)}`];
+    f.job.plan.blockers = codes; f.job.plan.planHash = safety.digest({ ...f.job.plan, planHash: '' });
+    const saved = records.validateJobPlan(JSON.parse(JSON.stringify(f.job)), f.expected);
+    assert.deepEqual(saved.plan.blockers, codes);
+  } finally { await f.close(); }
+});
+
 test('outer origin and real mapped Plan/config remain distinct; full identity and sibling routes cannot be rewritten', async () => {
   const f = await fixture();
   try {

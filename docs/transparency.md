@@ -136,6 +136,8 @@ scanmux release-verify <repo> --log-commit <commit> --installed <abs dir> --pin 
 scanmux release-verify <repo> --log-commit <commit> --commit <commit> --pin <entries>:<head> --config <abs config>
 ```
 
+Installed-tree verification currently fails with `release_measurement_listed_path_missing` because the package omits `package-lock.json`, which the measurement lists; use `--commit` until this is fixed.
+
 | Situation | Verdict | Exit |
 | --- | --- | --- |
 | The measurement is in the log inside the pinned prefix, and the chain and pin are valid | `logged` | 0 |

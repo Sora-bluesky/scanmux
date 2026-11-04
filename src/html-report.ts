@@ -23,6 +23,7 @@ const labels: Record<string, ReportText> = {
   secret: '秘密情報の検出候補', dependency: '依存パッケージの脆弱性候補', code: 'コードの問題候補',
 };
 const reasons: Record<string, ReportText> = {
+  unsupported_git_config: '未対応のGit設定です。',
   no_recognized_config: '認識できる設定入力がありません。',
   offline_scope_unavailable: 'オフライン検査の範囲を成立させられません。',
   process_appcontainer_unsupported_platform: 'Trivyの制限実行はWindowsだけに対応します。',
@@ -99,6 +100,8 @@ function e(value: string | number): string { return String(value).replace(/[&<>"
 function label(value: string): string { return text(displayValue(labels, value, "未確認")); }
 function reason(value: string): string {
   if (Object.hasOwn(reasons, value)) return text(reasons[value]);
+  const gitConfig = /^unsupported_git_config:([a-z0-9-]{1,64}\.[a-z][a-z0-9-]{0,63})$/.exec(value);
+  if (gitConfig) return `${text(reasons.unsupported_git_config)} (${gitConfig[1]})`;
   for (const engine of ['gitleaks', 'osv', 'codex-security', 'runtime-advisories', 'trivy']) {
     if (value === `required_${engine}_incomplete`) return `${label(engine)}${text("が完了していません。")}`;
     if (value === `${engine}_execution_failed`) return `${label(engine)}${text("の実行に失敗しました。")}`;

@@ -35,7 +35,7 @@ const environment = {
   GIT_TERMINAL_PROMPT: '0', NPM_CONFIG_CACHE: path.join(run, 'npm-cache'),
   NPM_CONFIG_USERCONFIG: path.join(run, 'home', 'empty-npmrc'),
 };
-let commandNumber = 0, dockerTool, image, validateJobReport;
+let commandNumber = 0, dockerTool, image, validateJobReport, installedApp;
 const owned = new Map(), cliChildren = new Set();
 let forced = false;
 async function jsonFile(file, value) {
@@ -159,7 +159,7 @@ async function scenario(name, profile, fixture) {
   const profilePath = path.join(directory, 'profile.json'); await jsonFile(profilePath, profile);
   const stdout = await open(path.join(directory, 'stdout.json'), 'wx', 0o600);
   const stderr = await open(path.join(directory, 'stderr.txt'), 'wx', 0o600);
-  const child = spawn(process.execPath, [path.join(source, 'bin/scanmux.mjs'), 'job-scan', fixture, '--job-profile', profilePath, '--json'], {
+  const child = spawn(process.execPath, [path.join(installedApp, 'bin/scanmux.mjs'), 'job-scan', fixture, '--job-profile', profilePath, '--json'], {
     cwd: source, env: { ...environment, TMPDIR: tmp }, stdio: ['ignore', stdout.fd, stderr.fd],
   });
   cliChildren.add(child);
@@ -295,7 +295,11 @@ try {
   before = await inventory(source);
   await jsonFile(path.join(out, 'source-before.json'), before);
   good(await command('/usr/local/bin/npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, timeoutMs: 300000 }));
-  ({ validateJobReport } = await import(pathToFileURL(path.join(source, 'src/job-records.ts'))));
+  const { installPackage } = await import(pathToFileURL(path.join(source, 'scripts/ci-installed-package.mjs')));
+  const packageDirectory = path.join(run, 'installed-package'); await mkdir(packageDirectory);
+  ({ app: installedApp } = await installPackage(packageDirectory));
+  await import(pathToFileURL(path.join(installedApp, 'bin/typescript-bootstrap.mjs')));
+  ({ validateJobReport } = await import(pathToFileURL(path.join(installedApp, 'src/job-records.ts'))));
   await jsonFile(path.join(out, 'preparation.json'), { pinsSha256: hash(pinsBytes), docker: dockerPin, gitleaks, image, runtime: { nodeVersion: process.versions.node, python, git }, daemon: version.Server, fixtureMiB: mib });
   set('SETUP approved pins and real Linux environment', true);
   const fixture = path.join(run, 'fixture'); await generateFixture(fixture, mib);

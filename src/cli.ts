@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { packageVersion } from './package-version.ts';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
@@ -43,7 +44,7 @@ import { openRepository, releaseCommandTarget, releaseLogCheck, releaseRecord, r
 import { matchIntelFiles, parseMaxAgeHours, refreshIntel } from './intel/index.ts';
 import { SourceCleanupOwner, sourceCleanupFailed, sourceCleanupFor, withSourceCleanup } from './source-cleanup.ts';
 
-const help = `ScanMux 0.2.0
+const help = `ScanMux 0.2.1
 Usage: scanmux doctor [--config /absolute/config.json] [--json]
        scanmux plan <local-git-root> --config /absolute/config.json [--base SHA --head SHA] [--json]
        scanmux scan <local-git-root> --config /absolute/config.json [--base SHA --head SHA] [--json]
@@ -245,6 +246,7 @@ async function runMain(argv: string[], dependencies: { ai?: SyntheticAiRuntime }
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   let command: string | undefined;
   try {
+    if (argv.length === 1 && argv[0] === '--version') { process.stdout.write(packageVersion + '\n'); return 0; }
     const options = {
       config: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean' }, 'site-origin': { type: 'string' },
       base: { type: 'string' }, head: { type: 'string' },

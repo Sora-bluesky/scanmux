@@ -96,11 +96,11 @@ async function fixture(options: Options = {}) {
     observeConfiguration, summarizeConfiguration, ...cleanup, verifyVersion: async () => {}, jobDiskDiagnostic: () => undefined,
     execute: async (_tool: unknown, args: string[], execution: { input?: string }) => {
       const command = args.slice(args.indexOf('-C') + 2);
-      assert.ok(['rev-parse', 'status', 'ls-tree', 'cat-file'].includes(command[0]!));
-      const result = gitResult(command, execution.input);
+      assert.ok(['rev-parse', 'status', 'ls-tree', 'cat-file', 'merge-base'].includes(command[0]!));
+      const result = spawnSync('git', args, { env, input: execution.input, windowsHide: true });
       return { reason: 'exit', code: result.status, stdout: result.stdout };
     },
-  }, ['buildPlan', 'readCommitFiles', 'materialize']);
+  }, ['buildPlan', 'commitFacts', 'readCommitFiles', 'materialize', 'checkGitConfig']);
   const calls: { database: string; config: string; snapshot: string; toolVersion: string }[] = [];
   const adapters = await loaded('src/adapters.ts', { ...fs, path, ...safety, ...databases, ...npm, emptyRun, JobDiskCopyLimitError,
     RuntimeAdvisoryAdapter: class {}, TrivyAdapter: class {},
@@ -318,16 +318,131 @@ test('config.worktree is accepted with the safe main-config allowlist', async ()
   assert.equal((await f.analyze()).exitCode, 0);
 });
 
-test('worktree and main configs reject the same includes, execution keys, extensions and continuations', async () => {
+test('worktree and main configs reject the same keys and invalid values with bounded key diagnostics', async () => {
   const f = await fixture();
-  for (const value of ['[include]\npath = unsafe\n', '[includeIf "gitdir:*"]\npath = unsafe\n', '[core]\nhooksPath = unsafe\n', '[core]\nfsmonitor = unsafe\n',
-    '[filter "test"]\nsmudge = unsafe\n', '[extensions]\nunknown = true\n', '[core]\nfilemode = false\\\n', '[core]\nbare = true\n', '[core]\nrepositoryformatversion = 1\n']) {
+  for (const [value, key] of [
+    ['[include]\npath = unsafe\n', 'include.path'], ['[includeIf "gitdir:*"]\npath = unsafe\n', 'includeif.path'],
+    ['[filter "test"]\nsmudge = unsafe\n', 'filter.smudge'], ['[alias]\nstatus = !unsafe\n', 'alias.status'],
+    ['[core]\nsshCommand = unsafe\n', 'core.sshcommand'], ['[extensions]\nunknown = true\n', 'extensions.unknown'],
+    ['[extensions]\nobjectFormat = sha256\n', 'extensions.objectformat'], ['[core]\nfilemode = false\\\n', 'core.filemode'],
+    ['[core]\nbare = true\n', 'core.bare'], ['[core]\nrepositoryformatversion = 1\n', 'core.repositoryformatversion'],
+    ['[extensions]\nworktreeConfig = yes\n', 'extensions.worktreeconfig'], ['[core]\nautocrlf = yes\n', 'core.autocrlf'],
+    ['[core]\nsafecrlf = input\n', 'core.safecrlf'], ['[core]\neol = auto\n', 'core.eol'],
+    ['[user]\nunknown = unsafe\n', 'user.unknown'], ['[push]\nunknown = unsafe\n', 'push.unknown'],
+    ['[branch "test"]\nunknown-2 = unsafe\n', 'branch.unknown-2'],
+    ['[url "git@example.invalid:"]\ninsteadOf = unsafe\n', 'url.insteadof'],
+  ]) {
     const errors: string[][] = [];
     for (const file of ['config', 'config.worktree']) {
       await fs.writeFile(path.join(f.root, '.git', file), value);
       const plan: Plan = await f.repo.buildPlan(f.root, f.config, f.workspace);
       errors.push(plan.blockers); await fs.writeFile(path.join(f.root, '.git', file), '[core]\nrepositoryformatversion = 0\nbare = false\n');
     }
-    assert.deepEqual(errors[1], errors[0], value); assert.ok(errors[0]!.length, value);
+    assert.deepEqual(errors, [[`unsupported_git_config:${key}`], [`unsupported_git_config:${key}`]], key);
+  }
+});
+
+test('each exact inert, overridden and EOL key is accepted in either config with mixed-case tokens', async () => {
+  const f = await fixture(), main = path.join(f.root, '.git', 'config'), worktree = path.join(f.root, '.git', 'config.worktree');
+  const settings = [
+    ['user', 'name', 'Fixture'], ['user', 'email', 'fixture@example.invalid'], ['user', 'signingkey', 'inert'], ['user', 'useconfigonly', 'true'],
+    ['push', 'default', 'simple'], ['push', 'followtags', 'true'], ['push', 'autosetupremote', 'true'],
+    ['lfs "https://example.invalid/repo.git/info/lfs"', 'access', 'basic'], ['remote "origin"', 'pushurl', 'unused'],
+    ['url "git@example.invalid:"', 'pushinsteadof', 'unused'],
+    ['branch "topic"', 'description', 'inert'], ['branch "topic"', 'rebase', 'true'], ['branch "topic"', 'pushremote', 'origin'], ['branch "topic"', 'vscode-merge-base', f.base],
+    ['core', 'hookspath', 'unused'], ['core', 'fsmonitor', 'unused'], ['core', 'attributesfile', 'unused'], ['core', 'excludesfile', 'unused'],
+    ...['false', 'true', 'input'].map(value => ['core', 'autocrlf', value]), ...['false', 'true', 'warn'].map(value => ['core', 'safecrlf', value]),
+    ...['lf', 'crlf', 'native'].map(value => ['core', 'eol', value]),
+  ];
+  const original = await fs.readFile(main, 'utf8');
+  for (const file of [main, worktree]) {
+    for (const [section, key, value] of settings) for (const mixed of [false, true]) {
+      const text = `[${mixed ? section!.toUpperCase() : section}]\n${mixed ? key!.toUpperCase() : key} = ${value}\n`;
+      await fs.writeFile(file, text); await f.repo.checkGitConfig(file);
+    }
+    if (file === worktree) await fs.writeFile(main, original + '[extensions]\nworktreeConfig = true\n');
+    await fs.writeFile(file, (file === main ? original : '') + settings.map(([section, key, value]) => `[${section}]\n${key} = ${value}\n`).join(''));
+    assert.deepEqual((await f.repo.buildPlan(f.root, f.config, f.workspace)).blockers, []);
+    await fs.writeFile(file, original);
+    await fs.writeFile(main, original);
+  }
+});
+
+test('malformed or oversized identifiers stay generic; valid digit and hyphen tokens are named without values or subsections', async () => {
+  const f = await fixture(), main = path.join(f.root, '.git', 'config'), original = await fs.readFile(main, 'utf8');
+  for (const value of ['[core]\n9invalid = secret\n', '[core]\ninvalid.key = secret\n', '[core]\nfilemode false\n', '[core\nfilemode = false\n',
+    `[${'s'.repeat(65)}]\nkey = secret\n`, `[core]\n${'k'.repeat(65)} = secret\n`, '[core]\nfilemode = false\rbare = true\n', 'x'.repeat(65537)]) {
+    for (const file of ['config', 'config.worktree']) {
+      const target = path.join(f.root, '.git', file); await fs.writeFile(target, value);
+      await assert.rejects(f.repo.checkGitConfig(target), { code: 'unsupported_git_config' }); await fs.writeFile(target, original);
+    }
+  }
+  const privateValue = 'synthetic-credential-0123456789', subsection = 'https://fixture:synthetic@invalid.example/private';
+  for (const file of ['config', 'config.worktree']) {
+    const target = path.join(f.root, '.git', file);
+    await fs.writeFile(target, original + `[remote "${subsection}"]\nurl = https://fixture:${privateValue}@invalid.example/repo\n[Section-2 "${subsection}"]\nVariable-3 = ${privateValue}\n`);
+    const plan: Plan = await f.repo.buildPlan(f.root, f.config, f.workspace), report = await f.analyze(false);
+    const code = 'unsupported_git_config:section-2.variable-3';
+    assert.deepEqual(plan.blockers, [code]); assert.deepEqual(report.missing.filter(item => item.kind === 'plan_blocker'), [{ kind: 'plan_blocker', side: 'head', code }]);
+    assert.equal(safety.identifier(code), code); assert.equal(new safety.SafeError(code).code, code);
+    const output = JSON.stringify({ plan, report }) + f.text(report);
+    assert.ok(output.includes(code)); for (const hidden of [privateValue, subsection, 'invalid.example']) assert.ok(!output.includes(hidden));
+    await fs.writeFile(target, original);
+  }
+});
+
+test('configured hooks, fsmonitor, external attributes and excludes are overridden on every target Git path', async () => {
+  const f = await fixture(), metadata = path.join(f.root, '.git'), hooks = path.join(metadata, 'unsafe-hooks'), marker = path.join(metadata, 'executed');
+  const monitor = path.join(metadata, 'monitor'), attributes = path.join(metadata, 'attributes'), excludes = path.join(metadata, 'excludes');
+  await fs.mkdir(hooks);
+  const script = `#!/bin/sh\nprintf hit >> '${marker.replaceAll('\\', '/')}'\n`;
+  for (const name of ['post-index-change', 'reference-transaction', 'pre-auto-gc']) await fs.writeFile(path.join(hooks, name), script, { mode: 0o755 });
+  await fs.writeFile(monitor, script, { mode: 0o755 });
+  f.git(['-c', `core.hooksPath=${hooks}`, 'read-tree', f.head]); assert.equal(await fs.readFile(marker, 'utf8'), 'hit'); await fs.unlink(marker);
+  f.git(['-c', `core.fsmonitor=${monitor.replaceAll('\\', '/')}`, 'status', '--porcelain']);
+  assert.ok((await fs.readFile(marker, 'utf8')).includes('hit')); await fs.unlink(marker);
+  await fs.writeFile(attributes, '* -text\n'); await fs.writeFile(excludes, 'hidden.txt\n');
+  const original = await fs.readFile(path.join(metadata, 'config'), 'utf8');
+  const overrides = `[core]\nhooksPath = ${hooks.replaceAll('\\', '/')}\nfsmonitor = ${monitor.replaceAll('\\', '/')}\nattributesFile = ${attributes.replaceAll('\\', '/')}\nexcludesFile = ${excludes.replaceAll('\\', '/')}\nautocrlf = true\n`;
+  for (const file of ['config', 'config.worktree']) {
+    await fs.writeFile(path.join(metadata, 'config'), original + '[extensions]\nworktreeConfig = true\n');
+    await fs.writeFile(path.join(metadata, file), original + (file === 'config.worktree' ? '' : '[extensions]\nworktreeConfig = true\n') + overrides);
+    await fs.writeFile(path.join(f.root, 'README.md'), 'fixture\r\n');
+    f.git(['read-tree', '--reset', f.head]);
+    const plan: Plan = await f.repo.buildPlan(f.root, f.config, f.workspace); assert.deepEqual(plan.blockers, []);
+    const facts = await f.repo.commitFacts(f.root, f.config, f.workspace, new Map([[f.base, ['README.md']]]));
+    assert.equal(facts.dirty, false); assert.equal(facts.commits.get(f.base).ancestor, true);
+    assert.equal((await f.repo.readCommitFiles(f.root, f.config, f.workspace, f.head, () => true)).files.get('README.md').toString(), 'fixture\n');
+    const work = path.join(f.workspace, `materialize-${file}`); await fs.mkdir(work);
+    const snapshot = await f.repo.materialize(plan, f.config, work, new AbortController().signal);
+    assert.equal(await fs.readFile(path.join(snapshot, 'README.md'), 'utf8'), 'fixture\n');
+    await fs.writeFile(path.join(f.root, 'hidden.txt'), 'untracked\n');
+    assert.deepEqual((await f.repo.buildPlan(f.root, f.config, f.workspace)).blockers, ['dirty_worktree_unsupported']); await fs.unlink(path.join(f.root, 'hidden.txt'));
+    assert.equal(await fs.stat(marker).then(() => true, () => false), false);
+    await fs.writeFile(path.join(metadata, file), original);
+  }
+});
+
+test('LF and CRLF status respects supported EOL settings while snapshots always hash committed blobs', async () => {
+  for (const attribute of ['', '* text\n', '* -text\n']) {
+    const content = { 'README.md': 'fixture\n', ...(attribute ? { '.gitattributes': attribute } : {}) };
+    const f = await fixture({ baseFiles: content, headFiles: content }), configPath = path.join(f.root, '.git', 'config');
+    const original = await fs.readFile(configPath, 'utf8'); let snapshotHash = '';
+    for (const autocrlf of ['false', 'true', 'input']) for (const ending of ['\n', '\r\n']) {
+      await fs.writeFile(configPath, original + `[core]\nautocrlf = ${autocrlf}\nsafecrlf = warn\neol = lf\n`);
+      await fs.writeFile(path.join(f.root, 'README.md'), `fixture${ending}`);
+      // A fresh index forces Git to compare content rather than reuse cached stat data.
+      f.git(['read-tree', '--reset', f.head]);
+      const plan: Plan = await f.repo.buildPlan(f.root, f.config, f.workspace);
+      const dirty = ending === '\r\n' && (attribute === '* -text\n' || !attribute && autocrlf === 'false');
+      assert.equal(plan.dirty, dirty, JSON.stringify({ attribute, autocrlf, ending }));
+      assert.deepEqual(plan.blockers, dirty ? ['dirty_worktree_unsupported'] : []);
+      assert.equal(plan.files.find(file => file.path === 'README.md')!.sha256, safety.hash('fixture\n'));
+      if (snapshotHash) assert.equal(plan.snapshotHash, snapshotHash); else snapshotHash = plan.snapshotHash;
+    }
+    await fs.writeFile(path.join(f.root, 'README.md'), 'changed\n');
+    assert.deepEqual((await f.repo.buildPlan(f.root, f.config, f.workspace)).blockers, ['dirty_worktree_unsupported']);
+    f.git(['add', 'README.md']);
+    assert.deepEqual((await f.repo.buildPlan(f.root, f.config, f.workspace)).blockers, ['dirty_worktree_unsupported']);
   }
 });
