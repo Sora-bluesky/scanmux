@@ -157,7 +157,7 @@ On a GitHub-hosted `ubuntu-24.04` runner with SDK 0.5.1, no network or provider 
 
 The other workbench commands measured were `get-cli-scan-resume`, `get-scan`, `get-scan-feedback`, `set-scan-thread`, `set-scan-cost-limit`, `prepare-scan-completion`, `finalize-scan-usage` and `fail-scan`. Even reads fail because each command opens the database and applies migrations.
 
-ScanMux does not treat `SQLITE_IOERR_SHMSIZE` or `SQLITE_CANTOPEN` as a disk-capacity cause because these codes also have other causes. Those failures keep their stage code, such as `worker_sdk_initialization_failed` or `worker_sdk_finalization_failed`. The SDK's own error chain carried no native error code: every `code` was null. The workbench failure reaches Node only as exit status and text.
+ScanMux does not treat `SQLITE_IOERR_SHMSIZE` or `SQLITE_CANTOPEN` as a disk-capacity cause because these codes also have other causes. When these failures end the SDK run, they keep their stage code, such as `worker_sdk_initialization_failed` or `worker_sdk_finalization_failed`. The SDK's own error chain carried no native error code: every `code` was null. The workbench failure reaches Node only as exit status and text.
 
 Not measured: other filesystems, a filesystem with free blocks but no inodes, the SDK's own Node writes, MCP paths, a live provider run and memory limits.
 

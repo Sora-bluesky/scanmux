@@ -155,7 +155,7 @@ GitHub-hostedの`ubuntu-24.04` runnerでSDK 0.5.1を使い、ネットワーク�
 
 計測したその他のworkbench commandは`get-cli-scan-resume`、`get-scan`、`get-scan-feedback`、`set-scan-thread`、`set-scan-cost-limit`、`prepare-scan-completion`、`finalize-scan-usage`、`fail-scan`です。いずれもデータベースを開いてマイグレーションを適用するため、読取りも失敗します。
 
-`SQLITE_IOERR_SHMSIZE`と`SQLITE_CANTOPEN`には他の原因もあるため、ScanMuxはディスク容量不足の原因として扱いません。これらの失敗は`worker_sdk_initialization_failed`や`worker_sdk_finalization_failed`など、元の段階のエラーコードを維持します。SDK自身のエラーチェーンにはネイティブエラーコードがなく、すべての`code`はnullでした。workbenchの失敗は終了ステータスとテキストとしてのみNodeに届きます。
+`SQLITE_IOERR_SHMSIZE`と`SQLITE_CANTOPEN`には他の原因もあるため、ScanMuxはディスク容量不足の原因として扱いません。これらの失敗でSDKの実行が終わる場合は、`worker_sdk_initialization_failed`や`worker_sdk_finalization_failed`など、元の段階のエラーコードを維持します。SDK自身のエラーチェーンにはネイティブエラーコードがなく、すべての`code`はnullでした。workbenchの失敗は終了ステータスとテキストとしてのみNodeに届きます。
 
 他のファイルシステム、空きブロックはあるがinodeがないファイルシステム、SDK自身のNode書込み、MCPの処理経路、実際のproviderを使った実行、メモリ上限は計測していません。
 
