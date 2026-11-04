@@ -48,7 +48,7 @@ test('the JS oracle observes base and head but propagates unexpected template er
     const projectRoot = path.join(root, 'no-marker');
     writeTree(projectRoot, pair.head);
     writeFileSync(path.join(projectRoot, 'vendor/lodash/template.js'), 'module.exports = () => () => {};\n');
-    assert.deepEqual(await jsProbe({ projectRoot }), { kind: 'observed', problem: 'absent' });
+    await assert.rejects(() => jsProbe({ projectRoot }), /completed without the expected marker/);
   } finally { delete globalThis.__scanmux_lodash_template_marker; rmSync(root, { recursive: true, force: true }); }
 });
 

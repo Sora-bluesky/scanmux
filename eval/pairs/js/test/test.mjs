@@ -25,5 +25,6 @@ export default async function ({ projectRoot }) {
     }
     throw error;
   }
-  return { kind: 'observed', problem: globalThis[marker] === 73 ? 'present' : 'absent' };
+  if (globalThis[marker] !== 73) throw new Error('Template completed without the expected marker');
+  return { kind: 'observed', problem: 'present' };
 }
