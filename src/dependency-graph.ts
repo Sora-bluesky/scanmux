@@ -80,6 +80,7 @@ interface Graph {
   readonly workspaces: boolean;
   readonly overrides: string;
   readonly cutoff: boolean;
+  readonly uvWorkspace?: { readonly members: readonly { readonly name: string; readonly source: TomlTable }[]; readonly manifest: TomlTable | undefined };
 }
 type Loaded<T, R> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: R };
 
@@ -172,17 +173,20 @@ const markerKey = (marker: string | null) => marker === null ? '' : hash(marker)
 const uvResolution = (settings: TomlTable) =>
   declared({ override: settings['override-dependencies'], constraint: settings['constraint-dependencies'], metadata: settings['dependency-metadata'] });
 const dynamicDependencyFields = new Set(['dependencies', 'optional-dependencies']);
-function uvManifest(text: string): Manifest {
+function uvManifest(text: string, workspace = false, virtualRoot = false): Manifest {
   const toml = parseToml(text);
   if (!toml.ok) return { kind: 'undetermined', reason: toml.reason };
-  const project = toml.value.project, tool = toml.value.tool;
+  const tool = toml.value.tool;
   const uv = isTomlTable(tool) ? tool.uv : undefined;
+  const virtual = virtualRoot && toml.value.project === undefined;
+  const project = virtual ? {} : toml.value.project;
   if (!isTomlTable(project) || (uv !== undefined && !isTomlTable(uv))) return { kind: 'undetermined', reason: 'manifest_invalid' };
-  if (uv?.workspace !== undefined) return { kind: 'undetermined', reason: 'workspaces_outside_subset' };
+  if (!workspace && uv?.workspace !== undefined) return { kind: 'undetermined', reason: 'workspaces_outside_subset' };
   const dynamic = stringList(project.dynamic);
   if (!dynamic) return { kind: 'undetermined', reason: 'manifest_invalid' };
   if (dynamic.some(field => dynamicDependencyFields.has(field))) return { kind: 'undetermined', reason: 'dynamic_dependencies_outside_subset' };
-  const sections: [string, string, TomlValue | undefined][] = [['project.dependencies', 'main', project.dependencies], ['tool.uv.dev-dependencies', 'dev:dev', uv?.['dev-dependencies']]];
+  const sections: [string, string, TomlValue | undefined][] = virtual ? []
+    : [['project.dependencies', 'main', project.dependencies], ['tool.uv.dev-dependencies', 'dev:dev', uv?.['dev-dependencies']]];
   const groups = (prefix: string, kind: string, table: TomlValue | undefined) => {
     if (table === undefined) return true;
     if (!isTomlTable(table)) return false;
@@ -344,6 +348,7 @@ function uvGroups(value: TomlValue | undefined): [string, UvDependency[]][] {
   });
 }
 const uvSourceKinds = ['registry', 'editable', 'virtual', 'git', 'path', 'directory', 'url'] as const;
+const memberLabel = (member: string, label: string) => member === '.' ? label : member + ':' + label;
 const uvVersion = (raw: string) => parsePypiVersion(raw).ok ? raw : null;
 const uvVersionId = (raw: string | null) => raw === null ? null : uvVersion(raw) ?? 'sha256:' + hash(raw);
 
@@ -392,8 +397,6 @@ function uvGraph(text: string): Graph {
   if (packages.length > dependencyLimits.instances) invalid('instance_limit');
   const manifest = lock.manifest;
   if (manifest !== undefined && !isTomlTable(manifest)) return invalid();
-  const members = manifest?.members;
-  const workspaces = Array.isArray(members) && members.length > 0;
   const parsed = packages.map(item => {
     if (!isTomlTable(item) || typeof item.name !== 'string') return invalid();
     const name = parsePypiName(item.name);
@@ -416,15 +419,17 @@ function uvGraph(text: string): Graph {
     const dependencies = uvDependencies(table.dependencies), extras = uvGroups(table['optional-dependencies']), dev = uvGroups(table['dev-dependencies']);
     optional.set(key, new Map(extras));
     const entries = root ? rootEntries(table.metadata) : [];
-    for (const entry of entries) addDirect(direct, entry.name, uvDirect(entry.group ?? '?', entry.extras, entry.spec, entry.marker));
+    const member = root && isTomlTable(table.source) && typeof table.source[source!] === 'string' ? table.source[source!] as string : '.';
+    const groupLabel = (group: string) => root ? memberLabel(member, group) : group;
+    for (const entry of entries) addDirect(direct, entry.name, uvDirect(groupLabel(entry.group ?? '?'), entry.extras, entry.spec, entry.marker));
     const specFor = (group: string, dependency: string): readonly Constraint[] | 'not_recorded' => {
       const matching = entries.filter(entry => entry.group === group && entry.name === dependency);
       return matching.length ? matching.map(entry => ({ spec: entry.spec, marker: entry.conditional || matching.length > 1 })) : 'not_recorded';
     };
-    for (const dependency of dependencies) pending.push([key, dependency, root ? specFor('main', dependency.name) : 'not_recorded', root ? ['main'] : []]);
+    for (const dependency of dependencies) pending.push([key, dependency, root ? specFor('main', dependency.name) : 'not_recorded', root ? [groupLabel('main')] : []]);
     if (root) {
-      for (const [group, list] of extras) for (const dependency of list) pending.push([key, dependency, specFor('extra:' + group, dependency.name), ['extra:' + group]]);
-      for (const [group, list] of dev) for (const dependency of list) pending.push([key, dependency, specFor('dev:' + group, dependency.name), ['dev:' + group]]);
+      for (const [group, list] of extras) for (const dependency of list) pending.push([key, dependency, specFor('extra:' + group, dependency.name), [groupLabel('extra:' + group)]]);
+      for (const [group, list] of dev) for (const dependency of list) pending.push([key, dependency, specFor('dev:' + group, dependency.name), [groupLabel('dev:' + group)]]);
     }
     const all = [['', dependencies], ...extras.map(([group, list]) => ['extra:' + group, list]), ...dev.map(([group, list]) => ['dev:' + group, list])] as [string, UvDependency[]][];
     const { name: _n, version: _v, source: sourceTable, sdist, wheels, dependencies: _d, 'optional-dependencies': _o, 'dev-dependencies': _g, 'resolution-markers': markers, ...rest } = table;
@@ -434,6 +439,20 @@ function uvGraph(text: string): Graph {
       declared_dependencies: fingerprint(all.map(([group, list]) => [group, list.map(item => item.declared)])),
       other: fingerprint(rest),
     } });
+  }
+  // uv records a virtual workspace root's groups in the lock manifest when it has no package entry.
+  if (manifest?.['dependency-groups'] !== undefined && !parsed.some(item => isTomlTable(item.table.source)
+    && (item.table.source.editable === '.' || item.table.source.virtual === '.'))) {
+    const entries = rootEntries({ 'requires-dev': manifest['dependency-groups'] });
+    if (builder.nodes.size === dependencyLimits.instances) invalid('instance_limit');
+    builder.node({ key: '.', name: '.', version: null, versionId: null, root: true, bundled: false, nonRegistry: false,
+      digests: { flags: fingerprint(null), artifact: fingerprint(null), declared_dependencies: fingerprint(null), other: fingerprint(null) } });
+    for (const entry of entries) {
+      const group = entry.group!;
+      addDirect(direct, entry.name, uvDirect(group, entry.extras, entry.spec, entry.marker));
+      pending.push(['.', { name: entry.name, version: null, marker: entry.conditional, extras: entry.extras, declared: null, markerText: null },
+        [{ spec: entry.spec, marker: entry.conditional || entries.filter(item => item.group === group && item.name === entry.name).length > 1 }], [group]]);
+    }
   }
   const target = (dependency: UvDependency) => {
     const key = dependency.version === null ? dependency.name : keyOf(dependency.name, dependency.version);
@@ -451,7 +470,10 @@ function uvGraph(text: string): Graph {
     }
   }
   const resolution = declared({ overrides: manifest?.overrides, constraints: manifest?.constraints, metadata: manifest?.['dependency-metadata'] });
-  return { nodes: builder.nodes, edges: builder.edges, outside: builder.outside, direct, workspaces, overrides: resolution, cutoff: declaresCutoff(lock.options) };
+  const members = parsed.filter(item => isTomlTable(item.table.source) && (Object.hasOwn(item.table.source, 'editable') || Object.hasOwn(item.table.source, 'virtual')))
+    .map(item => ({ name: item.name, source: item.table.source as TomlTable }));
+  return { nodes: builder.nodes, edges: builder.edges, outside: builder.outside, direct, workspaces: false, overrides: resolution, cutoff: declaresCutoff(lock.options),
+    uvWorkspace: { members, manifest } };
 }
 
 function loadGraph(ecosystem: Ecosystem, bytes: Uint8Array): Loaded<Graph, GraphReason> {
@@ -543,9 +565,98 @@ function nodeChanges(base: Graph | null, head: Graph): Raw[] {
   return raw;
 }
 
-interface Side { readonly lockfile: Uint8Array | undefined; readonly manifest: Uint8Array | undefined; readonly settings: Uint8Array | undefined }
+interface Side {
+  readonly lockfile: Uint8Array | undefined; readonly manifest: Uint8Array | undefined; readonly settings: Uint8Array | undefined;
+  readonly inputs: DependencyInputs; readonly directory: string;
+}
 const sha = (bytes: Uint8Array | undefined) => bytes ? hash(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)) : null;
 const settingsName: Readonly<Record<Ecosystem, string>> = { npm: '.npmrc', uv: 'uv.toml' };
+
+function workspacePath(value: unknown): value is string {
+  if (value === '.') return true;
+  try { return typeof value === 'string' && safeRelative(value) === value && !/[*?\[\]{}]/.test(value); } catch { return false; }
+}
+function workspacePatterns(value: TomlValue | undefined): string[] | null {
+  const patterns = stringList(value);
+  return patterns?.every(pattern => workspacePath(pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern)) ? patterns : null;
+}
+const selectsMember = (patterns: readonly string[], member: string) => patterns.some(pattern => pattern.endsWith('/*')
+  ? path.posix.dirname(member) === pattern.slice(0, -2) && member !== '.' : pattern === member);
+
+function projectManifest(ecosystem: Ecosystem, side: Side, graph: Graph | null): { manifest: Manifest; sha256: string | null } {
+  const single = { manifest: loadManifest(ecosystem, side.manifest, !!side.lockfile), sha256: sha(side.manifest) };
+  if (ecosystem !== 'uv' || !graph?.uvWorkspace) return single;
+  const { members, manifest: locked } = graph.uvWorkspace;
+  const memberPath = (source: TomlTable) => source.editable ?? source.virtual;
+  const lockWorkspace = (Array.isArray(locked?.members) && locked.members.length > 0)
+    || members.some(item => memberPath(item.source) !== '.') || members.length > 1;
+  if (!side.manifest) return lockWorkspace ? { manifest: { kind: 'undetermined', reason: 'workspaces_outside_subset' }, sha256: null } : single;
+  const text = decode(side.manifest);
+  if (!text.ok) return single;
+  const parsed = parseToml(text.value);
+  if (!parsed.ok) return single;
+  const root = parsed.value, uv = isTomlTable(root.tool) && isTomlTable(root.tool.uv) ? root.tool.uv : {};
+  if (uv.workspace === undefined && !lockWorkspace) return single;
+  if (root.project === undefined && uv.workspace === undefined) return single;
+  const sibling = (relative: string) => side.directory === '.' ? relative : side.directory + '/' + relative;
+  const rootFile = sibling('pyproject.toml'), files = new Map<string, Uint8Array>([[rootFile, side.manifest]]);
+  for (const { source } of members) {
+    const member = memberPath(source);
+    if (!workspacePath(member)) continue;
+    const file = sibling(member === '.' ? 'pyproject.toml' : member + '/pyproject.toml'), bytes = side.inputs.get(file);
+    if (bytes) files.set(file, bytes);
+  }
+  const sha256 = fingerprint([...files].sort(([left], [right]) => compareText(left, right)).map(([file, bytes]) => [file, sha(bytes)]));
+  const outside = { manifest: { kind: 'undetermined', reason: 'workspaces_outside_subset' } as const, sha256 };
+  if (uv.workspace !== undefined && !isTomlTable(uv.workspace)) return outside;
+  const workspace = uv.workspace ?? {}, patterns = workspacePatterns(workspace.members), exclude = workspacePatterns(workspace.exclude);
+  if (!patterns || !exclude) return outside;
+  const paths = new Map<string, string>(), packageNames = new Set<string>();
+  for (const { name, source } of members) {
+    const member = memberPath(source);
+    if (Object.keys(source).length !== 1 || !workspacePath(member) || paths.has(member) || packageNames.has(name)) return outside;
+    if (member !== '.' && (uv.workspace === undefined || !selectsMember(patterns, member) || selectsMember(exclude, member))) return outside;
+    paths.set(member, name);
+    packageNames.add(name);
+  }
+  if (root.project !== undefined && !paths.has('.')) return outside;
+  const names = locked === undefined ? (paths.has('.') ? [paths.get('.')!] : null) : stringList(locked.members);
+  const normalized = names?.map(pypiName);
+  if (!normalized || normalized.includes(null) || new Set(normalized).size !== normalized.length || normalized.length !== paths.size
+    || normalized.some(name => !packageNames.has(name!))) return outside;
+  for (const file of side.inputs.keys()) {
+    if (!dependencyInputPath(file) || path.posix.basename(file) !== 'pyproject.toml') continue;
+    const relative = path.posix.relative(side.directory, path.posix.dirname(file));
+    if (relative && workspacePath(relative) && selectsMember(patterns, relative) && !selectsMember(exclude, relative) && !paths.has(relative)) return outside;
+  }
+  for (const member of paths.keys()) {
+    if (!files.has(sibling(member === '.' ? 'pyproject.toml' : member + '/pyproject.toml'))) return outside;
+  }
+  const requirements = new Map<string, Requirements>(), direct = new Map<string, string[]>(), sources: [string, string][] = [];
+  let rootManifest: Extract<Manifest, { kind: 'determined' }> | null = null;
+  for (const [file, bytes] of [...files].sort(([left], [right]) => compareText(left, right))) {
+    const member = file === rootFile ? '.' : path.posix.relative(side.directory, path.posix.dirname(file));
+    const decoded = decode(bytes);
+    if (!decoded.ok) return { manifest: { kind: 'undetermined', reason: decoded.reason === 'encoding' ? 'manifest_encoding' : 'manifest_size_limit' }, sha256 };
+    const toml = parseToml(decoded.value);
+    if (!toml.ok) return { manifest: { kind: 'undetermined', reason: toml.reason }, sha256 };
+    const tool = toml.value.tool, settings = isTomlTable(tool) && isTomlTable(tool.uv) ? tool.uv : {};
+    if (member !== '.' && settings.workspace !== undefined) return { ...outside, sha256 };
+    const manifest = uvManifest(decoded.value, true, member === '.');
+    if (manifest.kind === 'undetermined') return { manifest, sha256 };
+    if (paths.has(member) && !(member === '.' && toml.value.project === undefined)
+      && (!isTomlTable(toml.value.project) || pypiName(toml.value.project.name) !== paths.get(member))) return { ...outside, sha256 };
+    if (member === '.') rootManifest = manifest;
+    for (const entry of manifest.requirements.values()) for (const item of entry.declarations) {
+      const group = memberLabel(member, entry.group);
+      addRequirement(requirements, memberLabel(member, entry.section), group, entry.name, item);
+    }
+    for (const [name, comparables] of manifest.direct) for (const comparable of comparables) addDirect(direct, name, memberLabel(member, comparable));
+    if (manifest.sources !== fingerprint(null)) sources.push([member, manifest.sources]);
+  }
+  return { manifest: { kind: 'determined', requirements, direct, overrides: rootManifest!.overrides,
+    sources: sources.some(([member]) => member !== '.') ? fingerprint(sources) : rootManifest!.sources, cutoff: rootManifest!.cutoff }, sha256 };
+}
 
 interface Settings { readonly overrides: string; readonly cutoff: boolean; readonly readable: boolean }
 function loadSettings(ecosystem: Ecosystem, bytes: Uint8Array | undefined): Settings {
@@ -558,18 +669,22 @@ function loadSettings(ecosystem: Ecosystem, bytes: Uint8Array | undefined): Sett
 }
 
 function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side; head: Side }): ProjectDiff {
-  const manifests = { base: loadManifest(ecosystem, sides.base.manifest, !!sides.base.lockfile), head: loadManifest(ecosystem, sides.head.manifest, !!sides.head.lockfile) };
   const settings = { base: loadSettings(ecosystem, sides.base.settings), head: loadSettings(ecosystem, sides.head.settings) };
   const graphs = {
     base: sides.base.lockfile ? loadGraph(ecosystem, sides.base.lockfile) : null,
     head: sides.head.lockfile ? loadGraph(ecosystem, sides.head.lockfile) : null,
   };
+  const loadedManifests = {
+    base: projectManifest(ecosystem, sides.base, graphs.base?.ok ? graphs.base.value : null),
+    head: projectManifest(ecosystem, sides.head, graphs.head?.ok ? graphs.head.value : null),
+  };
+  const manifests = { base: loadedManifests.base.manifest, head: loadedManifests.head.manifest };
   const changed = changedRequirements(manifests.base, manifests.head), requirements = changed.map(requirementChange);
   const common = {
     lockfile, ecosystem,
     inputs: {
-      base: { lockfileSha256: sha(sides.base.lockfile), manifestSha256: sha(sides.base.manifest) },
-      head: { lockfileSha256: sha(sides.head.lockfile), manifestSha256: sha(sides.head.manifest) },
+      base: { lockfileSha256: sha(sides.base.lockfile), manifestSha256: loadedManifests.base.sha256 },
+      head: { lockfileSha256: sha(sides.head.lockfile), manifestSha256: loadedManifests.head.sha256 },
     },
     manifest: { base: manifests.base.kind === 'undetermined' ? manifests.base.reason : null, head: manifests.head.kind === 'undetermined' ? manifests.head.reason : null },
     graph: { base: graphs.base?.ok ? summary(graphs.base.value) : null, head: graphs.head?.ok ? summary(graphs.head.value) : null },
@@ -584,6 +699,10 @@ function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side
   const raw = nodeChanges(base, head);
   if (raw.length > dependencyLimits.changes || requirements.length > dependencyLimits.changes) return { ...common, status: { kind: 'change_limit' }, requirements: [], changes: [] };
   const touched = new Set(raw.flatMap(change => change.kind === 'version_changed' || change.kind === 'added' ? [change.node.key] : []));
+  // Workspace packages are omitted from change rows but can carry a version change along an explanation path.
+  if ((head.uvWorkspace?.members.length ?? 0) > 1) for (const node of head.nodes.values()) {
+    if (node.root && (!base?.nodes.has(node.key) || base.nodes.get(node.key)!.versionId !== node.versionId)) touched.add(node.key);
+  }
   const changedDeclarations = new Set(changed.flatMap(({ after }) => after ? [after.group + '\0' + after.name] : []));
   const starts = [...new Set([...head.nodes.values()].filter(node => node.root).flatMap(node => (head.edges.get(node.key) ?? [])
     .flatMap(edge => edge.to !== null && edge.groups.some(group => changedDeclarations.has(group + '\0' + edge.name)) ? [edge.to] : [])))].sort(compareText);
@@ -613,7 +732,7 @@ export function diffDependencies(base: DependencyInputs, head: DependencyInputs)
   const projects = [...lockfiles].sort(([left], [right]) => compareText(left, right)).map(([lockfile, ecosystem]) => {
     const directory = path.posix.dirname(lockfile), sibling = (name: string) => directory === '.' ? name : `${directory}/${name}`;
     const side = (inputs: DependencyInputs): Side =>
-      ({ lockfile: inputs.get(lockfile), manifest: inputs.get(sibling(manifestName[ecosystem])), settings: inputs.get(sibling(settingsName[ecosystem])) });
+      ({ lockfile: inputs.get(lockfile), manifest: inputs.get(sibling(manifestName[ecosystem])), settings: inputs.get(sibling(settingsName[ecosystem])), inputs, directory });
     return diffProject(lockfile, ecosystem, { base: side(base), head: side(head) });
   });
   return { projects };
@@ -666,9 +785,10 @@ interface LoadedProject {
 
 function loadHeadProject(lockfile: string, ecosystem: Ecosystem, head: DependencyInputs): LoadedProject {
   const directory = path.posix.dirname(lockfile), sibling = (name: string) => directory === '.' ? name : `${directory}/${name}`;
-  const manifest = loadManifest(ecosystem, head.get(sibling(manifestName[ecosystem])), true);
   const bytes = head.get(lockfile), loaded = bytes ? loadGraph(ecosystem, bytes) : null;
   const graph = loaded?.ok ? loaded.value : null;
+  const { manifest } = projectManifest(ecosystem, { lockfile: bytes, manifest: head.get(sibling(manifestName[ecosystem])),
+    settings: head.get(sibling(settingsName[ecosystem])), inputs: head, directory }, graph);
   const reason: HeadProjectReason | null = !loaded ? 'lockfile_missing' : !loaded.ok ? loaded.reason
     : manifest.kind === 'undetermined' ? manifest.reason : loaded.value.workspaces ? 'workspaces_outside_subset' : null;
   const settings = loadSettings(ecosystem, head.get(sibling(settingsName[ecosystem])));

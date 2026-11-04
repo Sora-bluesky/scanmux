@@ -300,6 +300,12 @@ An assumption is something a result relies on: if it is false, a result can be w
 | | An AI candidate is not a confirmed finding, and a completed AI review with no candidates does not show that there are none. |
 | Optional Trivy supplements the existing four required engines; enabling it does not remove or complete any of them. Unanswered planned input units remain partial and `INCOMPLETE`. | Trivy covers only the five configured IaC formats through pinned embedded checks. It does not prove deployability, runtime safety, complete format support, check freshness or the absence of misconfiguration. Its findings are candidates. |
 
+## Dependency project analysis
+
+uv workspaces are determined only from the dependency inputs already collected for each commit. `uv.lock` supplies the editable/virtual member paths; safe relative paths, collected member manifests, matching normalized project names and an exact `[manifest] members` set are required. A missing `[manifest]` means only the root. Workspace `members` and `exclude` support literal paths and a single trailing `/*`; every selected collected manifest must be locked, and nested member workspaces are unsupported. Membership outside this subset remains `undetermined` with `workspaces_outside_subset`. A member's invalid manifest or dynamic dependencies makes the whole project undetermined with that member's reason.
+
+A virtual root may omit `[project]` when it declares a workspace; it contributes only dependency groups and resolution settings. Other roots without `[project]` remain `manifest_invalid`. Member requirements are merged with path-labelled sections, root-only resolution settings and sources from all members. The manifest digest covers all member manifests. Existing input budgets and exclusions apply without additional filesystem reads. Base and head are independent. npm workspaces still use `workspaces_outside_subset`, and advisory matching is unchanged. A determined project is not proof that a candidate upgrade can be resolved or installed.
+
 ## Known unverified points
 
 - Trivy's restricted Windows prototype observed a failed DNS lookup (11001) and denied direct TCP connection (10013). A UDP `SendTo` call succeeded, but delivery was not observed. UDP denial and a claim that all network traffic is blocked are unproven.
