@@ -212,7 +212,15 @@ Plans carry the constraint `same_user_concurrent_mutation_not_supported`.
 
 **How ScanMux or the user keeps it.** Git is a pinned tool like the scanners.
 It runs with system and global configuration disabled, hooks redirected to a private directory, `core.fsmonitor` off and `protocol.allow=never`.
-The target's `.git/config` may hold only a small set of known keys.
+The same deny-by-default policy applies to the target's `.git/config` and `.git/config.worktree` (section and variable names are case-insensitive):
+
+- Existing keys: `core.repositoryformatversion` (only `0`), `core.bare` (only `false`), `core.filemode`, `core.logallrefupdates`, `core.symlinks`, `core.ignorecase`, `remote.<name>.url`, `remote.<name>.fetch`, `branch.<name>.remote`, `branch.<name>.merge`, and `extensions.worktreeconfig` (only `true|false`).
+- Inert metadata: `user.name`, `user.email`, `user.signingkey`, `user.useconfigonly`, `push.default`, `push.followtags`, `push.autosetupremote`, and `branch.<name>.description`, `.rebase`, `.pushremote`, `.vscode-merge-base`. No commit, signing, push, rebase or editor operation reads these keys during scanning.
+- Overridden settings: `core.hookspath`, `core.fsmonitor`, `core.attributesfile`, `core.excludesfile`. Every target Git invocation forces private or disabled values, so the configured hooks, monitor and external files are not used.
+- Validated conversion settings: `core.autocrlf=false|true|input`, `core.safecrlf=false|true|warn`, `core.eol=lf|crlf|native`. They remain effective for `status`; a Git-clean CRLF checkout may differ from the committed LF blobs. Snapshots always contain committed blobs.
+
+Only these exact keys are accepted, never a whole section. Includes, aliases, filter drivers, SSH commands, unsupported extensions and all other keys are refused before scanning. The restricted grammar requires single-line `variable = value` settings and quoted subsections; malformed and continued lines are refused.
+Refusals use `unsupported_git_config:<section>.<variable>` in `plan.blockers` and dependency `missing[].code`, naming only normalized section/variable tokens (at most 64 characters each), never subsection names or values. Malformed or oversized identifiers use plain `unsupported_git_config`. Consumers must handle the suffixed form as well as the plain code.
 A dirty worktree blocks the plan.
 
 The plan records each file's object ID, size and SHA-256, and the snapshot is compared with it after every engine (`snapshot_changed` makes the result `ERROR`).

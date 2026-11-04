@@ -219,7 +219,15 @@ ACL 設定の PowerShell、`runner-check` の後始末の `taskkill`、`runner-c
 
 **守り方。** Git はスキャナーと同じく固定するツールです。
 システムとグローバルの設定を無効にし、フックを非公開のディレクトリへ向け、`core.fsmonitor` を切り、`protocol.allow=never` で動かします。
-対象の `.git/config` には決まった少数のキーしか置けません。
+対象の `.git/config` と `.git/config.worktree` には同じ許可方針を適用し、未指定のキーは拒否します。セクション名と変数名の大文字・小文字は区別しません。
+
+- 従来のキー：`core.repositoryformatversion`（`0`のみ）、`core.bare`（`false`のみ）、`core.filemode`、`core.logallrefupdates`、`core.symlinks`、`core.ignorecase`、`remote.<name>.url`、`remote.<name>.fetch`、`branch.<name>.remote`、`branch.<name>.merge`、`extensions.worktreeconfig`（`true|false`のみ）。
+- 検査中に参照しない情報：`user.name`、`user.email`、`user.signingkey`、`user.useconfigonly`、`push.default`、`push.followtags`、`push.autosetupremote`、`branch.<name>.description`、`.rebase`、`.pushremote`、`.vscode-merge-base`。検査では、これらを読むコミット・署名・push・rebase・エディターの操作を行いません。
+- 強制上書きする設定：`core.hookspath`、`core.fsmonitor`、`core.attributesfile`、`core.excludesfile`。対象へのすべてのGit呼出しで非公開の場所または無効な値へ上書きするため、設定されたフック・監視コマンド・外部ファイルは使いません。
+- 値を検証する改行設定：`core.autocrlf=false|true|input`、`core.safecrlf=false|true|warn`、`core.eol=lf|crlf|native`。`status`では有効なままにするため、CRLFの作業ファイルがLFのコミット済みblobと異なっても、Gitでは変更なしと判定する場合があります。スナップショットには常にコミット済みblobを使います。
+
+許可するのは列挙した正確なキーだけで、セクション全体は許可しません。include・alias・filterドライバー・SSHコマンド・未対応の拡張・その他のキーは検査前に拒否します。構文は1行の`variable = value`と引用符付きのサブセクションに限定し、不正な行や継続行は拒否します。
+拒否時は`plan.blockers`と依存関係の`missing[].code`に`unsupported_git_config:<section>.<variable>`を記録します。名前は正規化したセクション名・変数名（各64文字以内）だけで、サブセクション名や値は含めません。識別子が不正または長すぎる場合は従来の`unsupported_git_config`です。コードを比較する側は、接尾辞付きの形式にも対応する必要があります。
 作業ツリーに未コミットの変更があると計画を止めます。
 
 計画には各ファイルのオブジェクト ID、大きさ、SHA-256 を記録し、エンジンを1つ動かすたびにスナップショットをそれと比べます（`snapshot_changed` なら結果は `ERROR`）。

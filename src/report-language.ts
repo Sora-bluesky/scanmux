@@ -3,6 +3,7 @@ import type { EngineRun } from './model.ts';
 
 // Only application-owned display strings enter this closed dictionary.
 const english = {
+  "未対応のGit設定です。": "Unsupported Git configuration.",
   "AI通信の診断": "AI transport diagnostic",
   "認識できる設定入力がありません。": "No recognized configuration input was found.",
   "オフライン検査の範囲を成立させられません。": "Offline analysis coverage could not be established.",

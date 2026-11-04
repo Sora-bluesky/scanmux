@@ -23,6 +23,18 @@ function addFinding(report: Report): LegacyFinding {
   report.engines.push({ engine: 'osv', execution: 'completed', coverage: 'analyzed', targets: ['package-lock.json'], exclusions: [], findings: [finding], evidence: [], errors: [], version: '2.7.0', executableHash: 'f'.repeat(64), rulesVersion: null, dbAsOf: null, database: [], startedAt: report.startedAt, endedAt: report.endedAt, exitCode: 1, auth: 'none', modelRequested: null, modelActual: null, accessProgramRequested: null, accessProgramEffective: null, usage: { calls: 0, cost: null, kind: 'not_applicable', allowance: 'unknown' } });
   return finding;
 }
+test('Git config refusals explain bounded normalized keys in both languages without exposing raw data', () => {
+  const report = fixture();
+  report.reasons = ['unsupported_git_config:branch.vscode-merge-base', 'unsupported_git_config'];
+  report.plan.blockers = [...report.reasons];
+  for (const language of ['ja', 'en'] as const) {
+    const html = renderHtmlReport(report, language);
+    assert.ok(html.includes(language === 'ja' ? '未対応のGit設定です。' : 'Unsupported Git configuration.'));
+    assert.ok(html.includes('branch.vscode-merge-base'));
+    report.reasons.push('unsupported_git_config:core.sshcommand:https://synthetic-credential@invalid.example');
+    assert.ok(!renderHtmlReport(report, language).includes('synthetic-credential')); report.reasons.pop();
+  }
+});
 test('all five decisions are preserved; absent required engines and zero findings never imply safety', () => {
   for (const gate of ['PASS', 'FAIL', 'REVIEW', 'INCOMPLETE', 'ERROR'] as const) {
     const report = fixture(gate), before = structuredClone(report), html = renderHtmlReport(report);
