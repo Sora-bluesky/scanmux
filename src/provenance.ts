@@ -6,7 +6,8 @@ export interface ProvenanceSubject extends RuntimeSubject { readonly file: strin
 export type EngineState = 'invalid' | 'unverifiable' | 'unrecorded';
 export type EngineReason =
   | 'unhashed' | 'not_in_ledger' | typeof unpublishedReasons[number]
-  | 'signature_rejected' | 'verifier_failed' | 'evidence_changed' | 'evidence_unreadable' | 'artifact_changed' | 'artifact_unreadable';
+  | 'signature_rejected' | 'verifier_failed' | 'evidence_changed' | 'evidence_unreadable' | 'artifact_changed' | 'artifact_unreadable'
+  | 'archive_member_mismatch' | 'archive_changed' | 'archive_unreadable';
 export interface EngineDetail {
   readonly component: RuntimeComponent;
   readonly state: EngineState;
@@ -20,12 +21,14 @@ export interface PublisherCheck {
   readonly ledgerSeq: number;
   readonly bundle: PinnedFile;
   readonly trustedRoot: PinnedFile;
+  readonly archive?: { readonly file: PinnedFile; readonly member: string };
   readonly expected: GhExpectation;
 }
 export type ProvenancePlan =
   | { readonly kind: 'ready'; readonly checks: readonly PublisherCheck[] }
   | { readonly kind: 'refused'; readonly policy: PolicyRef; readonly engine: EngineDetail };
-export type VerifierOutcome = 'verified' | 'rejected' | 'failed' | 'evidence_changed' | 'evidence_unreadable' | 'artifact_changed' | 'artifact_unreadable';
+export type VerifierOutcome = 'verified' | 'rejected' | 'failed' | 'evidence_changed' | 'evidence_unreadable' | 'artifact_changed' | 'artifact_unreadable'
+  | 'archive_member_mismatch' | 'archive_changed' | 'archive_unreadable';
 export type ProvenanceDecision =
   | { readonly kind: 'verified' }
   | { readonly kind: 'refused'; readonly policy: PolicyRef; readonly engine: EngineDetail };
@@ -49,8 +52,8 @@ export function provenanceSubjects(policy: RuntimePolicy2, subjects: readonly Pr
   return [...subjects, { component: 'gh', sha256: verifier.sha256, file: verifier.path }];
 }
 
-function latest(ledger: readonly LedgerEntry[], component: RuntimeComponent, sha256: string, kind?: 'sigstore-slsa'): LedgerEntry | undefined {
-  return ledger.findLast(entry => entry.component === component && entry.sha256 === sha256 && (!kind || entry.evidence.kind === kind));
+function latest(ledger: readonly LedgerEntry[], component: RuntimeComponent, sha256: string, publisher = false): LedgerEntry | undefined {
+  return ledger.findLast(entry => entry.component === component && entry.sha256 === sha256 && (!publisher || entry.evidence.kind !== 'none'));
 }
 
 export function planProvenance(policy: RuntimePolicy2, ledger: readonly LedgerEntry[], subjects: readonly ProvenanceSubject[]): ProvenancePlan {
@@ -68,11 +71,12 @@ export function planProvenance(policy: RuntimePolicy2, ledger: readonly LedgerEn
     }
     if (subject.sha256 === null) return refuse(component, 'unverifiable', 'unhashed', null);
     if (subject.file === null) return refuse(component, 'unverifiable', 'not_a_file', null);
-    const entry = latest(ledger, component, subject.sha256, 'sigstore-slsa') ?? latest(ledger, component, subject.sha256);
+    const entry = latest(ledger, component, subject.sha256, true) ?? latest(ledger, component, subject.sha256);
     if (!entry) return refuse(component, 'unrecorded', 'not_in_ledger', null);
     if (entry.evidence.kind === 'none') return refuse(component, 'unverifiable', entry.evidence.reason, entry.seq);
     const { bundle, trustedRoot, sourceRef, sourceDigest } = entry.evidence;
-    checks.push({ component, file: subject.file, ledgerSeq: entry.seq, bundle, trustedRoot, expected: { ...requirement.publisher, sha256: subject.sha256, sourceRef, sourceDigest } });
+    checks.push({ component, file: subject.file, ledgerSeq: entry.seq, bundle, trustedRoot, expected: { ...requirement.publisher, sha256: subject.sha256, sourceRef, sourceDigest },
+      ...(entry.evidence.kind === 'sigstore-slsa-archive' ? { archive: { file: entry.evidence.archive, member: entry.evidence.member } } : {}) });
   }
   return { kind: 'ready', checks };
 }
@@ -81,6 +85,8 @@ const refusals: Record<Exclude<VerifierOutcome, 'verified'>, readonly [EngineSta
   rejected: ['invalid', 'signature_rejected'], failed: ['unverifiable', 'verifier_failed'],
   evidence_changed: ['unverifiable', 'evidence_changed'], evidence_unreadable: ['unverifiable', 'evidence_unreadable'],
   artifact_changed: ['unverifiable', 'artifact_changed'], artifact_unreadable: ['unverifiable', 'artifact_unreadable'],
+  archive_member_mismatch: ['invalid', 'archive_member_mismatch'],
+  archive_changed: ['unverifiable', 'archive_changed'], archive_unreadable: ['unverifiable', 'archive_unreadable'],
 };
 
 export function decideProvenance(policy: RuntimePolicy2, check: PublisherCheck, outcome: VerifierOutcome): ProvenanceDecision {

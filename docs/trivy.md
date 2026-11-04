@@ -24,7 +24,27 @@ The accepted executable SHA-256 is `94618922c9eb324d7099bf217b01504bfc1f87a0d46d
 The acquisition evidence for the Windows x64 ZIP uses SHA-256 `1051f49cb22d5284f43425f72aad9cda63ca12ceb92e7caa06903490c82dc9bf`.
 Verify the ZIP and the extracted executable separately and retain the ZIP-to-executable relationship with the acquisition record.
 
-A ZIP attestation is not proof of the executable's publisher.
+A ZIP attestation alone is not proof of the executable's publisher.
+For `publisher`, `sigstore-slsa-archive` evidence can bind a verified ZIP attestation to the pinned executable: ScanMux privately copies and re-hashes the ZIP, requires the exact `trivy.exe` member's SHA-256 to match the engine pin, then verifies the ZIP copy with `gh` against the ZIP hash and configured publisher identity. A missing, duplicate, oversized or mismatched member, or an unparseable ZIP, is invalid. At admission, an unreadable or changed ZIP is unverifiable (`archive_unreadable` or `archive_changed`); at `engine-record`, a missing ZIP is a general input failure, just like a missing bundle. ZIP names containing any non-ASCII byte require the UTF-8 flag. All entry headers are validated, but only the exact member is expanded, up to the byte length of the private engine copy.
+Use an absolute ZIP path as `archive` and `"member":"trivy.exe"` alongside `bundle`, `trustedRoot`, `sourceRef` and `sourceDigest` in the `engine-record` request's evidence. The ZIP remains outside the target and follows the same evidence-path rules. The copy budget applies at admission; `engine-record` does not establish one for any evidence file. See [runtime controls](runtime-controls.md).
+
+This chain was run against the official Trivy 0.76.1 Windows x64 ZIP with `gh` 2.94.0. The Trivy process itself was not started in that run. The verification used these values:
+
+| Field | Value |
+|---|---|
+| `repository` | `aquasecurity/trivy` |
+| `certIdentity` | `https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.1` |
+| `sourceRef` | `refs/tags/v0.76.1` |
+| `sourceDigest` | `e713f67f7d54decdcd9b3132c9751833dcced698` |
+| `predicateType` | `https://slsa.dev/provenance/v1` |
+| `member` | `trivy.exe` |
+
+Acquire the evidence outside the scan, replacing `<zip>` with the downloaded ZIP path, and save the trusted-root output to the file used as `trustedRoot`:
+
+```sh
+gh attestation download <zip> --repo aquasecurity/trivy
+gh attestation trusted-root
+```
 A matching digest fixes bytes; it does not establish that the distribution or its embedded checks are correct, fresh or honest.
 
 Add the following entry to `tools` in the existing external schema 1 or 2 config. Keep the other required tool pins, including the Windows process owner; this fragment is not a complete config. Paths must be absolute and outside the target repository.

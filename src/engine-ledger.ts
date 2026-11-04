@@ -1,7 +1,7 @@
 import type { BigIntStats } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
-import { SafeError, canonical, hash, within } from './safety.ts';
+import { SafeError, canonical, hash, safeRelative, within } from './safety.ts';
 import { runtimeComponents, zeroHead, type LedgerPin, type RuntimeComponent } from './runtime-policy.ts';
 
 export const ledgerLimit = 1024 * 1024;
@@ -11,6 +11,7 @@ export const unpublishedReasons = ['publisher_evidence_unpublished', 'os_signatu
 export interface PinnedFile { readonly path: string; readonly sha256: string }
 export type LedgerEvidence =
   | { readonly kind: 'sigstore-slsa'; readonly bundle: PinnedFile; readonly trustedRoot: PinnedFile; readonly sourceRef: string; readonly sourceDigest: string }
+  | { readonly kind: 'sigstore-slsa-archive'; readonly bundle: PinnedFile; readonly trustedRoot: PinnedFile; readonly sourceRef: string; readonly sourceDigest: string; readonly archive: PinnedFile; readonly member: string }
   | { readonly kind: 'none'; readonly reason: typeof unpublishedReasons[number] };
 export interface LedgerEntry {
   readonly seq: number;
@@ -57,9 +58,13 @@ function evidence(input: unknown): LedgerEvidence {
   if (!input || typeof input !== 'object' || Array.isArray(input)) bad();
   const kind = (input as Record<string, unknown>).kind;
   if (kind === 'none') return { kind, reason: member(exact(input, ['kind', 'reason']).reason, unpublishedReasons) };
-  if (kind !== 'sigstore-slsa') bad();
-  const value = exact(input, ['kind', 'bundle', 'trustedRoot', 'sourceRef', 'sourceDigest']);
-  return { kind, bundle: pinnedFile(value.bundle), trustedRoot: pinnedFile(value.trustedRoot), sourceRef: text(value.sourceRef, refPattern), sourceDigest: text(value.sourceDigest, sourceDigestPattern) };
+  if (kind !== 'sigstore-slsa' && kind !== 'sigstore-slsa-archive') bad();
+  const value = exact(input, ['kind', 'bundle', 'trustedRoot', 'sourceRef', 'sourceDigest', ...(kind === 'sigstore-slsa-archive' ? ['archive', 'member'] : [])]);
+  const common = { bundle: pinnedFile(value.bundle), trustedRoot: pinnedFile(value.trustedRoot), sourceRef: text(value.sourceRef, refPattern), sourceDigest: text(value.sourceDigest, sourceDigestPattern) };
+  if (kind === 'sigstore-slsa') return { kind, ...common };
+  let name: string;
+  try { name = safeRelative(value.member); } catch { bad(); }
+  return { kind, ...common, archive: pinnedFile(value.archive), member: name };
 }
 function recordedBy(input: unknown): LedgerEntry['recordedBy'] {
   const value = exact(input, ['scanmux', 'verifier']);
@@ -73,7 +78,8 @@ function encode(entry: LedgerEntry): string {
     ? { kind: entry.evidence.kind, reason: entry.evidence.reason }
     : { kind: entry.evidence.kind, bundle: { path: entry.evidence.bundle.path, sha256: entry.evidence.bundle.sha256 },
       trustedRoot: { path: entry.evidence.trustedRoot.path, sha256: entry.evidence.trustedRoot.sha256 },
-      sourceRef: entry.evidence.sourceRef, sourceDigest: entry.evidence.sourceDigest };
+      sourceRef: entry.evidence.sourceRef, sourceDigest: entry.evidence.sourceDigest,
+      ...(entry.evidence.kind === 'sigstore-slsa-archive' ? { archive: { path: entry.evidence.archive.path, sha256: entry.evidence.archive.sha256 }, member: entry.evidence.member } : {}) };
   const verifier = entry.recordedBy.verifier && { sha256: entry.recordedBy.verifier.sha256, version: entry.recordedBy.verifier.version };
   return JSON.stringify({
     seq: entry.seq, prev: entry.prev, recordedAt: entry.recordedAt, component: entry.component, platform: entry.platform,

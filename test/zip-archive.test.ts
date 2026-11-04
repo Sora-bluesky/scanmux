@@ -5,6 +5,48 @@ import { localHeader, zip } from './zip-fixture.ts';
 
 const limits = { maxEntries: 4, maxBytes: 1024 };
 
+test('zip reader: non-ASCII names require the UTF-8 flag', () => {
+  const entries: [string, Buffer][] = [['caf\u00e9.txt', Buffer.from('content')]];
+  const archive = zip(entries), central = archive.readUInt32LE(archive.length - 6);
+  assert.throws(() => readZip(archive, limits), /zip_archive_invalid/);
+  assert.throws(() => readZip(archive, limits, 'other'), /zip_archive_invalid/);
+  archive.writeUInt16LE(0x800, localHeader.flags); archive.writeUInt16LE(0x800, central + 8);
+  assert.deepEqual([...readZip(archive, limits)], entries);
+  assert.deepEqual([...readZip(archive, limits, entries[0][0])], entries);
+});
+
+test('zip reader: only the exact selected member is inflated and charged to the byte limit', () => {
+  const selected: [string, Buffer] = ['engine.exe', Buffer.from('engine')];
+  for (const descriptor of [false, true]) {
+    const archive = zip([['other', Buffer.alloc(2048)], selected], true, descriptor);
+    archive[30 + 'other'.length] = 0x07;
+    assert.throws(() => readZip(archive, { ...limits, maxBytes: 4096 }), /zip_archive_invalid/);
+    assert.deepEqual([...readZip(archive, { ...limits, maxBytes: selected[1].length }, selected[0])], [selected]);
+    assert.throws(() => readZip(archive, { ...limits, maxBytes: 0 }, 'ENGINE.EXE'), /zip_archive_invalid/);
+    assert.throws(() => readZip(archive, { ...limits, maxBytes: selected[1].length - 1 }, selected[0]), /zip_archive_invalid/);
+    assert.throws(() => readZip(archive, { ...limits, maxEntries: 1 }, selected[0]), /zip_archive_invalid/);
+  }
+});
+
+test('zip reader: a UTF-8 BOM is part of the selected member name', () => {
+  const entries: [string, Buffer][] = [['\uFEFFtrivy.exe', Buffer.from('content')]];
+  const archive = zip(entries), central = archive.readUInt32LE(archive.length - 6);
+  archive.writeUInt16LE(0x800, localHeader.flags); archive.writeUInt16LE(0x800, central + 8);
+  assert.deepEqual([...readZip(archive, limits, entries[0][0])], entries);
+  assert.throws(() => readZip(archive, limits, 'trivy.exe'), /zip_archive_invalid/);
+});
+
+test('zip reader: selecting a member still refuses unrelated duplicates and bad headers', () => {
+  const selected: [string, Buffer] = ['engine.exe', Buffer.from('engine')], other: [string, Buffer] = ['other', Buffer.from('other')];
+  const duplicate = zip([other, selected, other]);
+  const local = zip([other, selected]); local.writeUInt16LE(1, localHeader.flags);
+  const central = zip([selected, other]), directory = central.readUInt32LE(central.length - 6);
+  central.writeUInt16LE(99, directory + 46 + selected[0].length + 10);
+  const descriptor = zip([other, selected], true, true);
+  descriptor[30 + other[0].length + descriptor.readUInt32LE(descriptor.readUInt32LE(descriptor.length - 6) + 20) + 4] ^= 1;
+  for (const bad of [duplicate, local, central, descriptor]) assert.throws(() => readZip(bad, limits, selected[0]), /zip_archive_invalid/);
+});
+
 test('zip reader: stored and deflated entries round-trip; corruption, duplicates, unsafe names and trailing bytes are refused', () => {
   const entries: [string, Buffer][] = [['a.json', Buffer.from('{"a":1}\n')], ['b.json', Buffer.alloc(0)]];
   for (const deflate of [true, false]) assert.deepEqual([...readZip(zip(entries, deflate), { maxEntries: 4, maxBytes: 1024 })], entries);

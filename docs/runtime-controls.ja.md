@@ -98,9 +98,13 @@ component規則は通常どおり拒否します。ホストジョブのコン�
 | `publisher` | 上記に加え、配布元の証拠をオフラインで検証すること |
 
 エンジン、bundle、trusted rootを非公開のコピーへ移し、hashを再確認します。
-固定した版の`gh`へ渡し、`attestation verify`を`--custom-trusted-root`付き、tokenなしで実行します。
+`sigstore-slsa`では、エンジンのコピーを固定した版の`gh`へ渡し、`attestation verify`を`--custom-trusted-root`付き、tokenなしで実行します。
 終了0と、エンジンSHA256・predicate type・全証明書期待値に一致するJSONが必要です。
 GitHub-hosted runnerであることも照合します。
+
+ZIPに含まれるエンジンには、同じ証拠項目に`archive`と正確な`member`名を加える`sigstore-slsa-archive`を使えます。要求の`archive`はZIPの絶対パスで、台帳にはパスとSHA-256を保存します。`member`はファイル名、または`/`区切りの相対パスです。`..`、先頭の`/`、バックスラッシュは禁止し、大文字と小文字を区別します。ZIP内の名前に非ASCIIバイトを含む場合は、UTF-8フラグが必要です。
+ZIPを非公開の領域へコピーし、固定ハッシュを再確認してから、ZIP読取り処理で指定メンバーを読みます。既存のコピー予算は実行許可の確認時に適用し、`engine-record`はどの証拠ファイルにもコピー予算を設定しません。全エントリーのヘッダーを検証し、選択したメンバーだけを、実行許可の確認時に予算へ計上済みのエンジンの非公開コピーのバイト数まで展開します。そのSHA-256がエンジンの固定値と一致した場合だけ、`gh`でZIPのコピーを検証します。JSONにはZIPのSHA-256が必要で、predicateと証明書の照合は同じです。
+ZIPの証明だけでは実行ファイルの証明になりません。ZIPの証明の検証と、メンバーとエンジンのハッシュ一致の両方が必要です。確認するのはバイト列の対応と設定した配布元の識別情報であり、エンジンの正しさ・鮮度・安全性は示しません。対応する形式はZIPだけです。
 
 更新を記録する要求を作ります。
 `evidence`は`{"kind":"none","reason":"publisher_evidence_unpublished"}`でも構いません。
@@ -108,6 +112,8 @@ GitHub-hosted runnerであることも照合します。
 ```json
 {"schema":"scanmux.engine-record/v1","component":"osv","platform":"windows-x64","version":"1.0.0","change":"Update OSV","artifact":"C:/scanmux/tools/osv.exe","evidence":{"kind":"sigstore-slsa","bundle":"C:/scanmux/osv.sigstore.json","trustedRoot":"C:/scanmux/trusted-root.jsonl","sourceRef":"refs/tags/v1.0.0","sourceDigest":"<source commit SHA>"}}
 ```
+
+ZIP用の要求では、`evidence`を`"kind":"sigstore-slsa-archive"`にし、`"archive":"C:/scanmux/trivy.zip","member":"trivy.exe"`を加えます。ZIPのbundleと配布元に期待するソース情報を指定し、`artifact`は実行ファイルのままにします。ZIPのパスにもbundle・trusted rootと同じローカルパス・UNC・リンクの規則を適用します。既存の`sigstore-slsa`の台帳の符号化とハッシュは変わりません。
 
 `scanmux engine-record /absolute/request.json --config /absolute/config.json`でファイルをhashし、同じ方法でSigstore証拠を検証します。
 失敗時は台帳へ追記しません。固定範囲内に同じ識別値と証拠があれば、既存の記録を返します。
@@ -125,13 +131,15 @@ GitHub-hosted runnerであることも照合します。
 
 | コード | 原因 |
 |---|---|
-| `provenance_invalid_<component>` | 署名を拒否 |
+| `provenance_invalid_<component>` | 署名を拒否、またはZIPメンバーの欠落・重複・形式不正・不一致 |
 | `provenance_unverifiable_<component>` | 使える証拠がない、コピーを読めない・変更された、`gh`が失敗 |
 | `provenance_unrecorded_<component>` | hash未確認、または台帳にない |
 | `provenance_ledger_mismatch` | 台帳の固定値が不一致 |
 
 `deps`以外では、最初の3つは`policy`の後に`"engine":{"component":"osv","state":"invalid","reason":"signature_rejected","ledgerSeq":1}`のような情報を追加します。
 `provenance_ledger_mismatch`には`policy`も`engine`も追加しません。
+
+ZIPのメンバーの欠落・重複・サイズ超過・ハッシュ不一致、またはZIPを解析できない場合は、`engine.reason`が`archive_member_mismatch`、状態が`invalid`になります。実行許可の確認時にZIPを読めない場合は`archive_unreadable`、固定ハッシュと異なる場合は`archive_changed`で、どちらも状態は`unverifiable`です。`engine-record`では、ZIPの欠落はbundleの欠落と同じ一般的な入力エラーです。
 
 ネイティブコマンド、`job-scan`、`host-job-scan`でv2を適用します。
 ジョブのLinuxエンジンはmount前にホストで検証します。`serve`はschema 2を拒否します。

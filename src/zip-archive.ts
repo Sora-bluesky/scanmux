@@ -14,9 +14,9 @@ function slice(bytes: Buffer, start: number, length: number): Buffer {
   if (start < 0 || length < 0 || start + length > bytes.length) invalid();
   return bytes.subarray(start, start + length);
 }
-const utf8 = new TextDecoder('utf-8', { fatal: true });
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
-export function readZip(archive: Buffer, limits: ZipLimits): Map<string, Buffer> {
+export function readZip(archive: Buffer, limits: ZipLimits, only?: string): Map<string, Buffer> {
   let end = -1;
   for (let offset = archive.length - 22; offset >= Math.max(0, archive.length - 22 - wide16); offset--) {
     if (archive.readUInt32LE(offset) === eocdSignature && offset + 22 + archive.readUInt16LE(offset + 20) === archive.length) { end = offset; break; }
@@ -27,6 +27,7 @@ export function readZip(archive: Buffer, limits: ZipLimits): Map<string, Buffer>
   if (disk !== 0 || directoryDisk !== 0 || onDisk !== entries || entries === wide16 || directorySize === wide32 || directoryOffset === wide32) invalid();
   if (entries > limits.maxEntries || directoryOffset + directorySize !== end) invalid();
   const files = new Map<string, Buffer>();
+  const seen = new Set<string>();
   let cursor = directoryOffset, total = 0;
   for (let index = 0; index < entries; index++) {
     if (u32(archive, cursor) !== centralSignature) invalid();
@@ -36,11 +37,11 @@ export function readZip(archive: Buffer, limits: ZipLimits): Map<string, Buffer>
     const startDisk = u16(archive, cursor + 34), localOffset = u32(archive, cursor + 42);
     if ((flags & ~allowedFlags) || (method !== 0 && method !== 8) || startDisk !== 0 || compressed === wide32 || size === wide32 || localOffset === wide32) invalid();
     const rawName = slice(archive, cursor + 46, nameLength);
+    if (!(flags & 0x800) && rawName.some(byte => byte >= 0x80)) invalid();
     let name: string;
     try { name = safeRelative(utf8.decode(rawName)); } catch { invalid(); }
-    if (files.has(name)) invalid();
-    total += size;
-    if (total > limits.maxBytes) invalid();
+    if (seen.has(name)) invalid();
+    seen.add(name);
     if (u32(archive, localOffset) !== localSignature || !slice(archive, localOffset + 30, u16(archive, localOffset + 26)).equals(rawName)) invalid();
     if (u16(archive, localOffset + 6) !== flags || u16(archive, localOffset + 8) !== method) invalid();
     const dataOffset = localOffset + 30 + u16(archive, localOffset + 26) + u16(archive, localOffset + 28);
@@ -51,13 +52,17 @@ export function readZip(archive: Buffer, limits: ZipLimits): Map<string, Buffer>
       const after = dataOffset + compressed, signed = u32(archive, after) === descriptorSignature;
       if (local.some(value => value !== 0) || sizes(after + (signed ? 4 : 0)).some((value, at) => value !== declared[at])) invalid();
     } else if (local.some((value, at) => value !== declared[at])) invalid();
-    let content: Buffer;
-    if (method === 0) content = Buffer.from(data);
-    else { try { content = inflateRawSync(data, { maxOutputLength: Math.max(1, size) }); } catch { invalid(); } }
-    if (content.length !== size || crc32(content) !== checksum) invalid();
-    files.set(name, content);
+    if (only === undefined || name === only) {
+      total += size;
+      if (total > limits.maxBytes) invalid();
+      let content: Buffer;
+      if (method === 0) content = Buffer.from(data);
+      else { try { content = inflateRawSync(data, { maxOutputLength: Math.max(1, size) }); } catch { invalid(); } }
+      if (content.length !== size || crc32(content) !== checksum) invalid();
+      files.set(name, content);
+    }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
-  if (cursor !== end) invalid();
+  if (cursor !== end || (only !== undefined && !files.has(only))) invalid();
   return files;
 }

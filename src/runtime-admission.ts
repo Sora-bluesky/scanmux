@@ -1,4 +1,4 @@
-import { copyFile, readFile } from 'node:fs/promises';
+import { copyFile, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { releaseJobDiskRoot } from './job-disk.ts';
@@ -9,6 +9,7 @@ import { readPinnedLedger } from './engine-ledger.ts';
 import { admitRuntimePolicy, type RuntimePolicy, type RuntimePolicy2 } from './runtime-policy.ts';
 import { CopyCleanupError, JobDiskCopyLimitError, scopedCopyBudget } from './copy-budget.ts';
 import { sourceCleanupFor } from './source-cleanup.ts';
+import { readZip } from './zip-archive.ts';
 import {
   decideProvenance, evaluateGhVerification, ghOutputLimit, planProvenance, provenanceSubjects, ProvenanceRefusalError,
   type ProvenanceSubject, type PublisherCheck, type VerifierOutcome,
@@ -25,7 +26,7 @@ export function ghVerifyArguments(check: PublisherCheck, copies: { artifact: str
     '--deny-self-hosted-runners', '--format', 'json'];
 }
 
-/** Bundle and trusted root paths, for the recorder and for admission alike. I/O errors from resolving the file are left to the caller. */
+/** Evidence paths, for the recorder and for admission alike. I/O errors from resolving the file are left to the caller. */
 export async function evidencePath(file: string, root?: string): Promise<string> {
   if (!hostLocalPath(file)) throw new SafeError('provenance_evidence_not_local');
   if (root && within(root, path.resolve(file))) throw new SafeError('provenance_evidence_inside_target');
@@ -53,6 +54,21 @@ async function verifyIn(workspace: string, policy: RuntimePolicy2, check: Publis
   const artifact = await copied(check.file, copies.artifact);
   if (artifact === null) return 'artifact_unreadable';
   if (artifact !== check.expected.sha256) return 'artifact_changed';
+  let attested = copies.artifact, expected = check.expected;
+  if (check.archive) {
+    attested = path.join(workspace, 'archive.zip');
+    const archive = await copied(check.archive.file.path, attested);
+    if (archive === null) return 'archive_unreadable';
+    if (archive !== check.archive.file.sha256) return 'archive_changed';
+    let bytes: Buffer;
+    try { bytes = await readFile(attested); } catch { return 'archive_unreadable'; }
+    if (hash(bytes) !== check.archive.file.sha256) return 'archive_changed';
+    let member: Buffer | undefined;
+    try { member = readZip(bytes, { maxEntries: 0xfffe, maxBytes: (await stat(copies.artifact)).size }, check.archive.member).get(check.archive.member); }
+    catch { return 'archive_member_mismatch'; }
+    if (!member || hash(member) !== check.expected.sha256) return 'archive_member_mismatch';
+    expected = { ...expected, sha256: check.archive.file.sha256 };
+  }
   const bundle = await copied(check.bundle.path, copies.bundle), trustedRoot = await copied(check.trustedRoot.path, copies.trustedRoot);
   if (bundle === null || trustedRoot === null) return 'evidence_unreadable';
   if (bundle !== check.bundle.sha256 || trustedRoot !== check.trustedRoot.sha256) return 'evidence_changed';
@@ -67,11 +83,11 @@ async function verifyIn(workspace: string, policy: RuntimePolicy2, check: Publis
   };
   try {
     await verifyVersion(verifier, ['--version'], options, run);
-    const result = await run(verifier, ghVerifyArguments(check, copies), options);
+    const result = await run(verifier, ghVerifyArguments(check, { ...copies, artifact: attested }), options);
     if (result.reason.startsWith('job_disk_') || result.reason === 'termination_unverified' && diskStopped) throw new SafeError(result.reason);
     const diskCause = jobDiskDiagnostic(result);
     if (diskCause) throw new SafeError(diskCause);
-    return evaluateGhVerification(result.reason === 'exit' ? result.code : null, result.stdout, check.expected);
+    return evaluateGhVerification(result.reason === 'exit' ? result.code : null, result.stdout, expected);
   } catch (error) {
     // A refusal to start escapes to the shared admission window; attempted or cancelled checks keep their provenance outcome.
     if (error instanceof SafeError && (error.code === 'process_start_deadline' || error.code === 'termination_unverified' && diskStopped || error.code.startsWith('job_disk_'))) throw error;
@@ -81,9 +97,9 @@ async function verifyIn(workspace: string, policy: RuntimePolicy2, check: Publis
 
 /** Steps 3 and 4 for one publisher check; the copies live only in a private workspace removed before returning. */
 export async function verifyPublisher(policy: RuntimePolicy2, check: PublisherCheck, scope: AdmissionScope): Promise<VerifierOutcome> {
-  for (const file of [check.bundle.path, check.trustedRoot.path]) {
+  for (const file of [check.bundle.path, check.trustedRoot.path, ...(check.archive ? [check.archive.file.path] : [])]) {
     try { await evidencePath(file, scope.root); }
-    catch (error) { if (error instanceof SafeError) throw error; return 'evidence_unreadable'; }
+    catch (error) { if (error instanceof SafeError) throw error; return check.archive && file === check.archive.file.path ? 'archive_unreadable' : 'evidence_unreadable'; }
   }
   const workspace = await privateWorkspace(scope.root, { disposable: true });
   const cleanup = sourceCleanupFor(workspace); cleanup.register(workspace, workspace);

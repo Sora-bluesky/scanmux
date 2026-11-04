@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import fs from 'node:fs/promises';
-import { renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { main } from '../src/cli.ts';
@@ -18,6 +18,8 @@ import { admitRuntime, verifyPublisher } from '../src/runtime-admission.ts';
 import { JobDisk, withJobDisk } from '../src/job-disk.ts';
 import { testProcessOwner, withTestProcessOwner } from './process-owner.ts';
 import { CopyBudget, withCopyBudget } from '../src/copy-budget.ts';
+import { planProvenance } from '../src/provenance.ts';
+import { zip } from './zip-fixture.ts';
 
 type GhBehavior = { kind: 'exit'; code: number; stdout: string } | { kind: 'spawn_error' } | { kind: 'wait'; started?: () => void };
 interface Launch { file: string; args: string[]; cwd?: string; env?: NodeJS.ProcessEnv }
@@ -282,6 +284,114 @@ async function request(value: Record<string, unknown>) {
 }
 const none = { kind: 'none', reason: 'publisher_evidence_unpublished' };
 const signedRequest = { component: 'osv', version: '2.3.0', artifact: osvPath, evidence: { kind: 'sigstore-slsa', bundle: bundlePath, trustedRoot: rootPath, sourceRef, sourceDigest } };
+
+test('engine-record and publisher admission bind a Trivy ZIP attestation to the exact executable member', async () => {
+  const artifact = fresh('trivy.exe'), archive = fresh('trivy.zip'), member = 'bin/trivy.exe', body = Buffer.from('synthetic trivy executable');
+  const bytes = zip([['LICENSE', Buffer.alloc(body.length + 1)], [member, body]]);
+  bytes[30 + 'LICENSE'.length] = 0x07;
+  await fs.writeFile(artifact, body); await fs.writeFile(archive, bytes);
+  const pin = { path: fresh('ledger.jsonl'), entries: 0, head: '0'.repeat(64) }, require = [{ component: 'trivy', level: 'publisher', publisher }];
+  const evidence = { ...signedRequest.evidence, kind: 'sigstore-slsa-archive', archive, member };
+  const value = { component: 'trivy', version: '0.76.1', artifact, evidence };
+  gh = { kind: 'exit', code: 0, stdout: verifiedJson(hash(bytes)) };
+  duringVerification = () => {
+    assert.equal(path.basename(ghCopies[0]), 'archive.zip');
+    assert.deepEqual(readFileSync(ghCopies[0]), bytes, 'the verifier receives the private ZIP, never the executable');
+  };
+  try {
+    const recorded = await invoke(['engine-record', await request(value), '--config', await configFile(policy2(pin, {}, require)), '--json']);
+    assert.equal(recorded.exitCode, 0, recorded.error);
+    assert.equal(ghLaunches(recorded).length, 1);
+    const result = JSON.parse(recorded.output), stored = JSON.parse(await fs.readFile(pin.path, 'utf8'));
+    assert.equal(result.paste.tool.sha256, hash(body));
+    assert.deepEqual(stored.evidence, { ...sigstore, kind: 'sigstore-slsa-archive', archive: { path: archive, sha256: hash(bytes) }, member });
+    const policy = parseRuntimePolicy2(policy2(result.paste.ledger, {}, require));
+    const subject = { component: 'trivy' as const, sha256: hash(body), file: artifact };
+    const budget = new CopyBudget(body.length + bytes.length + Buffer.byteLength('synthetic bundle') + Buffer.byteLength('synthetic trusted root'));
+    await withCopyBudget(budget, () => admitRuntime(policy, [subject], { root: target, timeoutMs: 1000 }));
+    assert.equal(budget.remainingBytes, 0, 'the archive uses the existing copy budget');
+    for (const copy of ghCopies) await assert.rejects(fs.access(copy), 'private verification copies are removed');
+    gh = { kind: 'exit', code: 0, stdout: verifiedJson(hash(body)) };
+    await assert.rejects(admitRuntime(policy, [subject], { timeoutMs: 1000 }), error =>
+      error instanceof Error && 'engine' in error && (error.engine as { reason: string }).reason === 'verifier_failed', 'an executable digest cannot verify a ZIP attestation');
+    const again = await invoke(['engine-record', await request(value), '--config', await configFile(policy2(result.paste.ledger, {}, require)), '--json']);
+    assert.equal(JSON.parse(again.output).state, 'existing');
+    assert.deepEqual(ghLaunches(again), []);
+  } finally { duringVerification = null; }
+});
+
+for (const problem of ['tampered member', 'oversized member', 'missing member', 'duplicate member', 'wrong case', 'malformed ZIP'] as const) {
+  test(`archive publisher refuses ${problem} before the verifier and never records it`, async () => {
+    const artifact = fresh('trivy.exe'), archive = fresh('trivy.zip'), body = Buffer.from('synthetic trivy executable');
+    const member = 'trivy.exe';
+    const bytes = problem === 'malformed ZIP' ? Buffer.from('not a ZIP') : zip(problem === 'tampered member' ? [[member, Buffer.from('tampered')]]
+      : problem === 'oversized member' ? [[member, Buffer.concat([body, Buffer.from('x')])]]
+      : problem === 'missing member' ? [['other.exe', body]] : problem === 'duplicate member' ? [[member, body], [member, body]]
+      : [['TRIVY.EXE', body]]);
+    await fs.writeFile(artifact, body); await fs.writeFile(archive, bytes);
+    const require = [{ component: 'trivy', level: 'publisher', publisher }];
+    const pin = await ledgerFile([fields('trivy', hash(body), { ...sigstore, kind: 'sigstore-slsa-archive', archive: { path: archive, sha256: hash(bytes) }, member })]);
+    const before = await fs.readFile(pin.path), raw = policy2(pin, {}, require);
+    const policy = parseRuntimePolicy2(raw);
+    launches.length = 0;
+    await assert.rejects(admitRuntime(policy, [{ component: 'trivy', file: artifact, sha256: hash(body) }], { timeoutMs: 1000 }), error =>
+      error instanceof Error && 'engine' in error && JSON.stringify(error.engine) === JSON.stringify({ component: 'trivy', state: 'invalid', reason: 'archive_member_mismatch', ledgerSeq: 1 }));
+    assert.equal(launches.filter(launch => launch.file === ghPath).length, 0);
+    assert.deepEqual(engineLaunches({ launches }), []);
+    const empty = { ...pin, entries: 0, head: '0'.repeat(64), path: fresh('empty-ledger.jsonl') };
+    const record = await invoke(['engine-record', await request({ component: 'trivy', version: '0.76.1', artifact,
+      evidence: { ...signedRequest.evidence, kind: 'sigstore-slsa-archive', archive, member } }), '--config', await configFile(policy2(empty, {}, require))]);
+    assert.deepEqual(failure(record.error).engine, { component: 'trivy', state: 'invalid', reason: 'archive_member_mismatch', ledgerSeq: null });
+    assert.equal(record.launches.filter(launch => launch.file === ghPath).length, 0);
+    assert.deepEqual(engineLaunches(record), []);
+    await assert.rejects(fs.access(empty.path));
+    assert.deepEqual(await fs.readFile(pin.path), before);
+  });
+}
+
+test('archive publisher detects unreadable ZIPs, pin mismatches and ZIPs tampered during copying', async t => {
+  const archive = fresh('trivy.zip'), body = Buffer.from(osvBytes), bytes = zip([['trivy.exe', body]]);
+  await fs.writeFile(archive, bytes);
+  const evidence = { ...sigstore, kind: 'sigstore-slsa-archive' as const, archive: { path: archive, sha256: hash(bytes) }, member: 'trivy.exe' };
+  const policy = parseRuntimePolicy2(policy2({ path: fresh('unused-ledger'), entries: 0, head: '0'.repeat(64) }));
+  const plan = planProvenance(policy, [nextLedgerLine([], fields('osv', osv.sha256, evidence)).entry], [{ component: 'osv', sha256: osv.sha256, file: osv.path }]);
+  assert.equal(plan.kind, 'ready');
+  if (plan.kind !== 'ready') return;
+  const [check] = plan.checks;
+  launches.length = 0;
+  assert.equal(await verifyPublisher(policy, { ...check, archive: { file: { path: archive, sha256: '0'.repeat(64) }, member: evidence.member } }, { timeoutMs: 1000 }), 'archive_changed');
+  await fs.rm(archive);
+  assert.equal(await verifyPublisher(policy, check, { timeoutMs: 1000 }), 'archive_unreadable');
+  await fs.writeFile(archive, bytes);
+  const budget = new CopyBudget(1024 * 1024), copy = budget.copy.bind(budget);
+  t.mock.method(budget, 'copy', async (...args: Parameters<CopyBudget['copy']>) => {
+    const result = await copy(...args);
+    if (args[0] === archive) await fs.writeFile(args[1], zip([['trivy.exe', Buffer.from('tampered')]]));
+    return result;
+  });
+  assert.equal(await withCopyBudget(budget, () => verifyPublisher(policy, check, { timeoutMs: 1000 })), 'archive_changed');
+  assert.equal(launches.filter(launch => launch.file === ghPath).length, 0, 'no verifier starts for unreadable or changed ZIPs');
+});
+
+test('archive requests reject unsafe members, relative paths and UNC evidence without appending', async () => {
+  const archive = fresh('trivy.zip');
+  await fs.writeFile(archive, zip([['trivy.exe', Buffer.from(osvBytes)]]));
+  const pin = { path: fresh('ledger.jsonl'), entries: 0, head: '0'.repeat(64) };
+  const evidence = { ...signedRequest.evidence, kind: 'sigstore-slsa-archive', archive, member: 'trivy.exe' };
+  for (const change of [
+    ...['', '../trivy.exe', 'bin/../trivy.exe', '/trivy.exe', 'bin\\trivy.exe', 'bin/', './trivy.exe'].map(member => ({ evidence: { ...evidence, member }, code: 'engine_record_request_invalid' })),
+    { evidence: { ...evidence, archive: 'relative.zip' }, code: 'engine_record_request_invalid' },
+    { evidence: { ...evidence, archive: '//server/share/trivy.zip' }, code: 'provenance_evidence_not_local' },
+  ]) {
+    const result = await invoke(['engine-record', await request({ ...signedRequest, evidence: change.evidence }), '--config', await configFile(policy2(pin))]);
+    assert.equal(failure(result.error).error, change.code);
+    assert.deepEqual(result.launches, []);
+    await assert.rejects(fs.access(pin.path));
+  }
+  const remote = { ...sigstore, kind: 'sigstore-slsa-archive' as const, archive: { path: '//server/share/trivy.zip', sha256: hash('unused') }, member: 'trivy.exe' };
+  const ledger = await ledgerFile([fields('osv', osv.sha256, remote)]);
+  await assert.rejects(admitRuntime(parseRuntimePolicy2(policy2(ledger)), [{ component: 'osv', sha256: osv.sha256, file: osv.path }], { timeoutMs: 1000 }), { code: 'provenance_evidence_not_local' });
+});
 
 test('engine-record appends once, is idempotent, and its paste values admit the recorded engine', async () => {
   const pin = { path: fresh('ledger.jsonl'), entries: 0, head: '0'.repeat(64) };
