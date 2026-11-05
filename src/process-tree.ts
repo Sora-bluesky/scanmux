@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { privateWorkspace } from './private-storage.ts';
 import { canonical, hash, SafeError, within } from './safety.ts';
@@ -8,6 +8,7 @@ import type { Tool } from './model.ts';
 import type { ProcessResult } from './process.ts';
 import { releaseJobDiskRoot } from './job-disk.ts';
 import { scopedCopyBudget } from './copy-budget.ts';
+import { sourceCleanupFor } from './source-cleanup.ts';
 
 // A stop is confirmed within 5000 ms or reported as unverified.
 export const stopBudgetCeilingMs = 5000;
@@ -145,9 +146,10 @@ export async function verifiedImage(tool: Tool, target?: string): Promise<Buffer
 export async function startProcessOwner(helper: Tool, readyTimeoutMs: number, image?: Buffer): Promise<ProcessOwner> {
   if (process.platform !== 'win32') throw new SafeError('process_containment_unavailable');
   const bytes = image ?? await verifiedImage(helper);
-  const workspace = await privateWorkspace();
+  const workspace = await privateWorkspace(undefined, { disposable: true });
+  const cleanup = sourceCleanupFor(workspace); cleanup.register(workspace, workspace);
   const copy = path.join(workspace, 'scanmux-windows-process-owner.exe');
-  const removeCopy = async () => { releaseJobDiskRoot(workspace); await rm(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {}); };
+  const removeCopy = async () => { releaseJobDiskRoot(workspace); await cleanup.cleanup(workspace); };
   try {
     const budget = scopedCopyBudget();
     if (budget) {

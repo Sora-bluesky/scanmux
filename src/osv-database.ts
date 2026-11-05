@@ -6,6 +6,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { boundedRead, canonical, hash, outside, record, SafeError } from './safety.ts';
 import { scopedCopyBudget, type CopyBudget } from './copy-budget.ts';
+import { sourceCleanupFor } from './source-cleanup.ts';
 
 export const osvEcosystems = ['npm', 'PyPI', 'Go', 'crates.io'] as const;
 export type OsvEcosystem = typeof osvEcosystems[number];
@@ -111,8 +112,8 @@ export async function prepareOfflineDatabase(options: {
     catch { throw new SafeError('invalid_database_receipt'); }
     receiptHash = hash(bytes);
   }
-  const directory = path.join(workspace, 'osv-database');
-  await mkdir(directory, { mode: 0o700 }); await canonical(directory);
+  const cleanup = sourceCleanupFor(workspace), directory = cleanup.register(workspace, path.join(workspace, 'osv-database'));
+  await mkdir(directory, { mode: 0o700 }); await cleanup.capture(workspace, directory); await canonical(directory);
   await mkdir(path.join(directory, 'osv-scalibr'), { mode: 0o700 });
   const prepared: PreparedDatabase = { directory, observations: [], files: [] };
   for (const ecosystem of options.ecosystems) {

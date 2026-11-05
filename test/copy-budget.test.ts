@@ -17,6 +17,9 @@ import { digest, hash, SafeError } from '../src/safety.ts';
 import type { Adapter, Config, Plan } from '../src/model.ts';
 import { testProcessOwner, withTestProcessOwner } from './process-owner.ts';
 import { startProcessOwner } from '../src/process-tree.ts';
+import { sourceCleanupFor } from '../src/source-cleanup.ts';
+import { isolateStorage } from './isolated-storage.ts';
+isolateStorage();
 
 async function api() {
   const name = '../src/copy-budget.ts';
@@ -145,7 +148,7 @@ test('copy budget: OSV ZIP copies use the shared budget and retain their hash id
   const budget = new CopyBudget(3);
   await assert.rejects(prepareOfflineDatabase({ ...input, copyBudget: budget }), { code: 'job_disk_copy_limit' });
   await absent(path.join(workspace, 'osv-database', 'osv-scalibr', 'npm', 'all.zip'));
-  await promises.rm(path.join(workspace, 'osv-database'), { recursive: true });
+  assert.deepEqual(await sourceCleanupFor(workspace).cleanup(workspace), { status: 'removed' });
   const exact = new CopyBudget(4), prepared = await prepareOfflineDatabase({ ...input, copyBudget: exact });
   assert.equal(prepared.files[0].sha256, hash('1234')); assert.equal(exact.reservedBytes, 4);
 });

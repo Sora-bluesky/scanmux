@@ -13,6 +13,7 @@ import { catalogIdentity } from '../src/advisory-catalog.ts';
 import { legacyEngines, verifyEngineCatalog } from '../src/engine-catalog.ts';
 import { emptyRun } from '../src/engine-run.ts';
 import { gitleaksConfig } from '../src/adapters.ts';
+import { prepareOfflineDatabase, verifyPreparedDatabase } from '../src/osv-database.ts';
 import { privateAclRule } from '../src/private-acl.ts';
 import { privateWorkspace, protectDirectory, verifyPrivateDirectory } from '../src/private-storage.ts';
 import { verifySnapshot } from '../src/repository.ts';
@@ -39,7 +40,7 @@ const body = 'export const value = 1;\n', name = 'source.ts';
 const oid = createHash('sha1').update(`blob ${Buffer.byteLength(body)}\0${body}`).digest('hex');
 const absent = async (directory: string) => assert.equal(await fs.lstat(directory).catch(() => null), null, directory);
 async function loaded(file: string, imports: Record<string, unknown>, names: string[]) {
-  const source = stripTypeScriptTypes(await fs.readFile(file, 'utf8')).replace(/^import [\s\S]*?;\r?\n/gm, '').replace(/^export /gm, '');
+  const source = stripTypeScriptTypes(await fs.readFile(file, 'utf8')).replace(/^import [\s\S]*?;\r?\n/gm, '').replace(/^export \{.*\} from .*;\r?\n/gm, '').replace(/^export /gm, '');
   return Function(...Object.keys(imports), source + `\nreturn {${names.join(',')}};`)(...Object.values(imports));
 }
 async function fixture() {
@@ -133,6 +134,36 @@ async function cleanupScan(f: Awaited<ReturnType<typeof fixture>>, duringScan = 
   return module.scan(f.plan, f.config, f.workspace, f.abort.signal, adapters) as Promise<Report>;
 }
 
+for (const mode of ['success', 'scanner_failure', 'copy_failure']) test(`scan removes its offline database after ${mode} and keeps its report`, async () => {
+  const f = await fixture(), source = await fs.mkdtemp(path.join(tmpdir(), 'database-'));
+  await fs.mkdir(path.join(source, 'osv-scalibr', 'PyPI'), { recursive: true });
+  if (mode !== 'copy_failure') await fs.writeFile(path.join(source, 'osv-scalibr', 'PyPI', 'all.zip'), 'offline fixture');
+  f.config.osvDatabase = source;
+  f.config.tools.osv = { path: process.execPath, version: '2.7.0', sha256: 'a'.repeat(64) };
+  f.plan.lockfiles = [name]; f.plan.policyHash = safety.digest(f.config); f.plan.planHash = safety.digest({ ...f.plan, planHash: '' });
+  let invoked = false, prepared = false;
+  const module = await loaded('src/adapters.ts', { ...safety, ...copyBudget, path, readFile: fs.readFile, writeFile: fs.writeFile, emptyRun,
+    prepareOfflineDatabase, verifyPreparedDatabase, verifyVersion: async () => {},
+    execute: async () => {
+      invoked = true;
+      assert.equal(await fs.readFile(path.join(f.workspace, 'osv-database', 'osv-scalibr', 'PyPI', 'all.zip'), 'utf8'), 'offline fixture');
+      return { reason: 'exit', code: mode === 'scanner_failure' ? 2 : 0, stdout: Buffer.from(JSON.stringify({ results: [{ source: { path: name }, packages: [] }] })) };
+    },
+  }, ['createOsvAdapter']);
+  const report = await cleanupScan(f, async () => {
+    if (prepared) return; prepared = true;
+    const run = await module.createOsvAdapter().run({ plan: f.plan, config: f.config, workspace: f.workspace,
+      snapshot: path.join(f.workspace, 'snapshot'), signal: f.abort.signal, secretsCleared: false });
+    assert.equal(run.execution, mode === 'success' ? 'completed' : 'failed');
+    if (mode !== 'success') throw new safety.SafeError(run.errors[0]);
+  });
+  assert.equal(prepared, true); assert.equal(invoked, mode !== 'copy_failure');
+  assert.equal(report.gate, mode === 'success' ? 'PASS' : 'ERROR');
+  await absent(path.join(f.workspace, 'osv-database'));
+  assert.equal(await fs.readFile(path.join(f.workspace, 'report.json'), 'utf8'), 'retained report');
+  if (mode !== 'copy_failure') assert.equal(await fs.readFile(path.join(source, 'osv-scalibr', 'PyPI', 'all.zip'), 'utf8'), 'offline fixture');
+});
+
 
 for (const replacement of ['workspace', 'recorded-copy']) test(`live cleanup preserves a replacement ${replacement} and reports failure`, async () => {
   const workspace = await privateWorkspace(), owner = sourceCleanupFor(workspace);
@@ -153,7 +184,7 @@ async function copiedSnapshot(f: Awaited<ReturnType<typeof fixture>>) {
   return module.materialize(f.plan, f.config, f.workspace, f.abort.signal) as Promise<string>;
 }
 
-for (const copyName of ['snapshot', 'repository', 'sdk-repository', 'sdk-projection-control', 'trivy-unused', 'trivy-probe-snapshot-unused', 'output-check-unused']) test(`a registered but never created ${copyName} is forgotten without a cleanup failure`, async t => {
+for (const copyName of ['snapshot', 'repository', 'sdk-repository', 'sdk-projection-control', 'osv-database', 'trivy-unused', 'trivy-probe-snapshot-unused', 'output-check-unused']) test(`a registered but never created ${copyName} is forgotten without a cleanup failure`, async t => {
   const f = await fixture(), owner = sourceCleanupFor(f.workspace), copy = owner.register(f.workspace, path.join(f.workspace, copyName)); let stderr = '';
   t.mock.method(process.stderr, 'write', (chunk: string) => { stderr += chunk; return true; });
   assert.deepEqual(await owner.cleanup(), { status: 'removed' }); assert.equal(cleanupModule.sourceCleanupFailed(), false); assert.equal(stderr, '');
@@ -170,6 +201,17 @@ test('a never created copy does not prevent removal of its disposable workspace'
   assert.equal(cleanupModule.sourceCleanupFailed(), false); assert.equal(stderr, '');
 });
 
+test('disposable cleanup preserves a replacement inside a nested workspace', async () => {
+  const workspace = await privateWorkspace(undefined, { disposable: true }), owner = sourceCleanupFor(workspace), head = path.join(workspace, 'head');
+  owner.register(workspace, workspace); await fs.mkdir(head);
+  const snapshot = owner.register(head, path.join(head, 'snapshot'));
+  await fs.mkdir(snapshot); await owner.capture(head, snapshot); await fs.writeFile(path.join(snapshot, name), body);
+  await fs.rename(snapshot, snapshot + '-held'); await fs.mkdir(snapshot); await fs.writeFile(path.join(snapshot, 'unrelated'), 'replacement');
+  assert.equal((await owner.cleanup()).status, 'failed');
+  assert.equal(await fs.readFile(path.join(snapshot, 'unrelated'), 'utf8'), 'replacement');
+  assert.equal(await fs.readFile(path.join(snapshot + '-held', name), 'utf8'), body);
+});
+
 test('an unrecorded copy whose existence cannot be checked still fails cleanup', async t => {
   const f = await fixture(), owner = sourceCleanupFor(f.workspace), copy = owner.register(f.workspace, path.join(f.workspace, 'snapshot')), lstat = fs.lstat; let stderr = '';
   const read = t.mock.method(fs, 'lstat', async (...args: Parameters<typeof fs.lstat>) => {
@@ -183,7 +225,7 @@ test('an unrecorded copy whose existence cannot be checked still fails cleanup',
   assert.equal(stderr, `ScanMux: source_cleanup_failed; private directory retained: ${JSON.stringify(copy)}\n`);
 });
 
-for (const copyName of ['snapshot', 'repository', 'sdk-repository', 'sdk-projection-control', 'trivy-', 'trivy-probe-snapshot-', 'output-check-']) test(`unrecorded ${copyName} identity preserves a replacement after a creation read failure`, async t => {
+for (const copyName of ['snapshot', 'repository', 'sdk-repository', 'sdk-projection-control', 'osv-database', 'trivy-', 'trivy-probe-snapshot-', 'output-check-']) test(`unrecorded ${copyName} identity preserves a replacement after a creation read failure`, async t => {
   const f = await fixture(), owner = sourceCleanupFor(f.workspace), lstat = fs.lstat, failure = Object.assign(new Error('identity read failed'), { code: 'EIO' });
   let copy = '', held = '', stderr = '';
   t.mock.method(fs, 'lstat', async (...args: Parameters<typeof fs.lstat>) => {

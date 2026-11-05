@@ -16,7 +16,7 @@ const failed = (): RemovalResult => { sourceCleanupState.failed = true; return {
 const absent = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 const identityOf = ({ dev, ino, birthtimeNs }: DirectoryIdentity): DirectoryIdentity => ({ dev, ino, birthtimeNs });
 const sameIdentity = (left: DirectoryIdentity, right: DirectoryIdentity) => left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs;
-const copyName = /^(?:snapshot|repository|sdk-repository|sdk-projection-control|(?:trivy|trivy-probe-snapshot|output-check)-[a-zA-Z0-9-]+)$/;
+const copyName = /^(?:snapshot|repository|sdk-repository|sdk-projection-control|osv-database|(?:trivy|trivy-probe-snapshot|output-check)-[a-zA-Z0-9-]+)$/;
 
 export function initializeSourceWorkspace(workspace: string, disposable: boolean): DirectoryIdentity {
   return sourceCleanupFor(workspace).initialize(workspace, disposable);
@@ -82,7 +82,7 @@ export class SourceCleanupOwner {
       const ownership = this.#workspaces.get(copy.workspace);
       try {
         if (!ownership || directory === copy.workspace && !ownership.disposable) throw new SafeError('source_cleanup_failed');
-        if (directory === copy.workspace && [...this.#paths].some(([child, owned]) => child !== directory && owned.workspace === copy.workspace)) throw new SafeError('source_cleanup_failed');
+        if (directory === copy.workspace && [...this.#paths].some(([child]) => child !== directory && within(directory, child))) throw new SafeError('source_cleanup_failed');
         await unlinkedDirectory(copy.workspace);
         await verifySourceWorkspace(copy.workspace, ownership.identity);
         const stat = await fs.lstat(directory, { bigint: true }).catch(error => { if (absent(error)) return undefined; throw error; });

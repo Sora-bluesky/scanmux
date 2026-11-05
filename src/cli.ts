@@ -526,7 +526,9 @@ JSON: ${verified.destination}
         return stopped.retained || sourceCleanupFailed() ? 4 : 0;
       }
       const resuming = command === 'resume' ? await readResumeSource(values.from!, root!, config) : undefined;
-      const workspace = await privateWorkspace(root);
+      const disposable = ['deps', 'doctor', 'runner-check', 'plan', 'ai-plan'].some(name => name === command);
+      const workspace = await privateWorkspace(root, { disposable });
+      if (disposable) sourceCleanupFor(workspace).register(workspace, workspace);
       if (command === 'deps') {
         const report = await analyzeDependencies(root!, config, workspace, executionSignal, comparison);
         process.stdout.write(values.json ? await checkedJson(report, config, workspace) : await checkedText(dependencyText(report), config, workspace));
