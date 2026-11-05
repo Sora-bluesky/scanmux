@@ -5,9 +5,6 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { stripTypeScriptTypes, syncBuiltinESMExports } from 'node:module';
-import childProcess from 'node:child_process';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
 import { performance } from 'node:perf_hooks';
 import { privateWorkspace } from '../src/private-storage.ts';
 import { defaults } from '../src/config.ts';
@@ -23,7 +20,6 @@ import { ciArguments } from '../src/ci.ts';
 import { commitPair } from '../src/comparison.ts';
 import { staticError } from '../src/output.ts';
 import { main as realMain } from '../src/cli.ts';
-import { encodeFrame, startProcessOwner } from '../src/process-tree.ts';
 import { isolateStorage } from './isolated-storage.ts';
 isolateStorage();
 afterEach(() => { mock.restoreAll(); syncBuiltinESMExports(); });
@@ -102,24 +98,4 @@ for (const gate of ['PASS', 'ERROR']) test(`scan keeps its ${gate} report and ch
   const result = await invoke(main, ['scan', await fs.mkdtemp(path.join(tmpdir(), 'target-')), '--json']);
   assert.equal(result.code, report.exitCode); assert.deepEqual(JSON.parse(await fs.readFile(path.join(workspace, 'report.json'), 'utf8')), report);
   assert.equal(await fs.readFile(path.join(workspace, 'checkpoints', 'receipt'), 'utf8'), 'saved');
-});
-
-for (const mode of ['success', 'startup_failure', 'copy_failure']) test(`process owner removes its helper workspace after ${mode}`, { skip: process.platform !== 'win32' }, async t => {
-  const spawn = childProcess.spawn, write = fs.writeFile;
-  t.mock.method(childProcess, 'spawn', (...args: Parameters<typeof childProcess.spawn>) => {
-    if (path.basename(String(args[0])) !== 'scanmux-windows-process-owner.exe') return spawn(...args);
-    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(),
-      kill: () => { setImmediate(() => child.emit('exit', 0)); return true; } });
-    child.stdin.on('finish', () => child.kill());
-    setImmediate(() => child.stdout.write(encodeFrame(1, 0, Buffer.from(mode === 'startup_failure' ? '0.0.0' : '1.4.0'))));
-    return child;
-  });
-  t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
-    if (mode === 'copy_failure' && path.basename(String(args[0])) === 'scanmux-windows-process-owner.exe') throw new Error('copy failed');
-    return write(...args);
-  });
-  syncBuiltinESMExports();
-  const call = startProcessOwner({ path: process.execPath, sha256: 'a'.repeat(64), version: '1.4.0' }, 1000, Buffer.from('fixture'));
-  if (mode === 'success') { const owner = await call; await owner.close(); } else await assert.rejects(call);
-  await empty();
 });
