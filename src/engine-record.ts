@@ -12,7 +12,7 @@ import { admitRuntimePolicy, runtimeComponents, type LedgerPin, type RuntimeComp
 import { decideProvenance, ProvenanceRefusalError, type PublisherCheck } from './provenance.ts';
 import { evidencePath, verifyPublisher, type AdmissionScope } from './runtime-admission.ts';
 
-const scanmuxVersion = '0.2.1';
+const scanmuxVersion = '0.2.2';
 type RequestEvidence =
   | { kind: 'sigstore-slsa'; bundle: string; trustedRoot: string; sourceRef: string; sourceDigest: string }
   | { kind: 'sigstore-slsa-archive'; bundle: string; trustedRoot: string; sourceRef: string; sourceDigest: string; archive: string; member: string }

@@ -357,7 +357,7 @@ Saved-record checks catch a result being applied to the wrong finding or test by
 Any `not_verified` result returns INCOMPLETE/3 regardless of the original report's gate or the supporting/required setting; integrity violations and existing execution errors return ERROR/4. The original report is never rewritten.
 The profile's retained budget covers the whole bundle; execution limits remain per job. Runtime/source copies are removed; the private verification bundle remains. Whole-command time and physical storage are not guaranteed.
 
-v0.2.1 leaves out generated tests or patches, newly added/edited tests between base and head, semantic test-strength or suite-wide weakening analysis, framework discovery, builds/installation, online prerequisites, other runtimes, Trivy selection, automatic dispositions/report rewrites, head-wide safety verdicts, imported runtime evidence, retries/resume, caches, batch/web/SDK/host-job execution.
+v0.2.2 leaves out generated tests or patches, newly added/edited tests between base and head, semantic test-strength or suite-wide weakening analysis, framework discovery, builds/installation, online prerequisites, other runtimes, Trivy selection, automatic dispositions/report rewrites, head-wide safety verdicts, imported runtime evidence, retries/resume, caches, batch/web/SDK/host-job execution.
 
 ## Related docs
 
