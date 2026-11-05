@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, rename, rmdir, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { registerJobDiskRoot } from './job-disk.ts';
+import { registerJobDiskRoot, releaseJobDiskRoot } from './job-disk.ts';
 import { privateAclRule } from './private-acl.ts';
 import { unlinkedDirectory, type DirectoryIdentity } from './safe-remove.ts';
 import { canonical, SafeError, within } from './safety.ts';
@@ -155,6 +155,15 @@ export async function privateWorkspace(target?: string | readonly string[], opti
   await verifySourceWorkspace(directory, identity);
   if (process.platform === 'win32') verifiedParents.set(parent, prepared.identity);
   registerJobDiskRoot(directory);
-  await writeFile(path.join(directory, 'empty-gitconfig'), '', { flag: 'wx', mode: 0o600 });
+  try { await writeFile(path.join(directory, 'empty-gitconfig'), '', { flag: 'wx', mode: 0o600 }); }
+  catch (error) {
+    try {
+      await unlinkedDirectory(directory); await verifyParentIdentity(directory, identity);
+      await unlink(path.join(directory, 'empty-gitconfig'));
+    } catch { /* The empty-directory removal below reports any retained workspace. */ }
+    try { await removeEmptyDirectory(directory, identity); } catch { /* Never remove a replacement or a nonempty workspace. */ }
+    releaseJobDiskRoot(directory);
+    throw error;
+  }
   return directory;
 }

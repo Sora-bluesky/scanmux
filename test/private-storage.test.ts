@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { registerJobDiskRoot } from '../src/job-disk.ts';
+import { registerJobDiskRoot, releaseJobDiskRoot } from '../src/job-disk.ts';
 import { privateAclRule } from '../src/private-acl.ts';
 import { privateWorkspace, protectDirectory, verifyPrivateDirectory } from '../src/private-storage.ts';
 import { unlinkedDirectory } from '../src/safe-remove.ts';
@@ -23,7 +23,7 @@ async function storage(overrides: Record<string, unknown> = {}) {
   let workspaces = 0, protections = 0, processes = 0;
   const parentAcl: string[] = [];
   const parent = path.join(tmpdir(), 'scanmux-private');
-  const imports = { ...fs, tmpdir, path, process, randomUUID, privateAclRule, canonical, SafeError, within, registerJobDiskRoot, initializeSourceWorkspace, sourceCleanupState, unlinkedDirectory, verifySourceWorkspace, ...overrides,
+  const imports = { ...fs, tmpdir, path, process, randomUUID, privateAclRule, canonical, SafeError, within, registerJobDiskRoot, releaseJobDiskRoot, initializeSourceWorkspace, sourceCleanupState, unlinkedDirectory, verifySourceWorkspace, ...overrides,
     mkdtemp: async (...args: Parameters<typeof fs.mkdtemp>) => { workspaces++; return fs.mkdtemp(...args); },
     spawn: ((...args: Parameters<typeof spawn>) => {
       const env = args[2]?.env;
@@ -62,6 +62,49 @@ test('workspace lives inside a protected parent that survives disposable cleanup
   const owner = sourceCleanupFor(workspace); owner.register(workspace, workspace);
   assert.equal((await owner.cleanup()).status, 'removed');
   assert.equal(await fs.lstat(workspace).catch(() => null), null); assert.equal(await verifyPrivateDirectory(parent), true);
+});
+
+for (const disposable of [false, true]) for (const partial of [false, true]) test(`a failed gitconfig write removes its workspace and releases its disk root, disposable=${disposable}, partial=${partial}`, async () => {
+  const failure = Object.assign(new Error('disk full'), { code: 'ENOSPC' }); let directory = '', registered = '', released = '';
+  const module = await storage({
+    registerJobDiskRoot: (root: string) => { registered = root; registerJobDiskRoot(root); },
+    releaseJobDiskRoot: (root: string) => { released = root; releaseJobDiskRoot(root); },
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      directory = path.dirname(String(args[0])); assert.equal(path.basename(String(args[0])), 'empty-gitconfig');
+      if (partial) await fs.writeFile(args[0], 'partial'); throw failure;
+    },
+  });
+  await assert.rejects(module.privateWorkspace(undefined, { disposable }), error => error === failure);
+  assert.equal(path.dirname(directory), module.parent); assert.deepEqual(await fs.readdir(module.parent), []);
+  assert.equal(await fs.lstat(directory).catch(() => null), null); assert.equal(registered, directory); assert.equal(released, directory);
+  assert.equal(sourceCleanupState.failed, false);
+});
+
+for (const mode of ['replacement', 'junction', 'nonempty', 'rmdir', 'unlink']) test(`gitconfig write failure preserves and reports ${mode} without replacing the original error`, async t => {
+  const failure = Object.assign(new Error('disk full'), { code: 'ENOSPC' }), held = path.join(tmpdir(), 'held'); let directory = '', released = '', stderr = '';
+  const module = await storage({
+    releaseJobDiskRoot: (root: string) => { released = root; releaseJobDiskRoot(root); },
+    rmdir: async (...args: Parameters<typeof fs.rmdir>) => { if (mode === 'rmdir') throw new Error('locked'); return fs.rmdir(...args); },
+    unlink: async (...args: Parameters<typeof fs.unlink>) => { if (mode === 'unlink') throw new Error('locked'); return fs.unlink(...args); },
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      directory = path.dirname(String(args[0])); await fs.writeFile(args[0], 'partial');
+      if (mode === 'replacement' || mode === 'junction') {
+        await fs.rename(directory, held);
+        if (mode === 'replacement') await fs.mkdir(directory); else await fs.symlink(held, directory, process.platform === 'win32' ? 'junction' : 'dir');
+        await fs.writeFile(path.join(directory, 'empty-gitconfig'), 'unchanged');
+      }
+      if (['replacement', 'junction', 'nonempty'].includes(mode)) await fs.writeFile(path.join(directory, 'canary'), 'unchanged');
+      throw failure;
+    },
+  });
+  t.mock.method(process.stderr, 'write', (chunk: string) => { stderr += chunk; return true; });
+  await assert.rejects(module.privateWorkspace(), error => error === failure);
+  assert.equal(released, directory); assert.ok(await fs.lstat(directory));
+  if (['replacement', 'junction', 'nonempty'].includes(mode)) assert.equal(await fs.readFile(path.join(directory, 'canary'), 'utf8'), 'unchanged');
+  if (mode === 'replacement' || mode === 'junction') assert.equal(await fs.readFile(path.join(directory, 'empty-gitconfig'), 'utf8'), 'unchanged');
+  if (mode === 'unlink') assert.equal(await fs.readFile(path.join(directory, 'empty-gitconfig'), 'utf8'), 'partial');
+  if (mode === 'junction') assert.equal((await fs.lstat(directory)).isSymbolicLink(), true);
+  assert.equal(sourceCleanupState.failed, true); assert.ok(stderr.includes('source_cleanup_failed'));
 });
 
 test('an existing protected parent is reused without changing its ACL', async () => {
