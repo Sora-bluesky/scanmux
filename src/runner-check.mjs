@@ -208,7 +208,7 @@ export async function checkRunner(config, workspace, signal) {
     const args = ['app-server', '--stdio', ...Object.entries(overrides).flatMap(([k, v]) => ['-c', `${k}=${JSON.stringify(v)}`])];
     app = spawn(runner.codex.path, args, { cwd: fixture, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     appRpc = rpc(app);
-    await appRpc.request('initialize', { clientInfo: { name: 'scanmux_runner_check', version: '0.2.2' }, capabilities: { experimentalApi: true } });
+    await appRpc.request('initialize', { clientInfo: { name: 'scanmux_runner_check', version: '0.2.3' }, capabilities: { experimentalApi: true } });
     app.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
     const effective = (await appRpc.request('config/read', { includeLayers: false })).config;
     assert.equal(effective.forced_login_method, 'chatgpt'); assert.equal(effective.model_provider, 'openai');
