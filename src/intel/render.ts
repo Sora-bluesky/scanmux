@@ -142,7 +142,7 @@ export function renderIntelSarif(match: IntelMatch): string {
       properties: { 'scanmux/intel/v1': { cve: item.cve, kev: item.kev.state, jvn: item.jvn.state, finding: ref } } };
   }));
   return JSON.stringify({ $schema: 'https://json.schemastore.org/sarif-2.1.0.json', version: '2.1.0', runs: [{
-    tool: { driver: { name: 'ScanMux', version: '0.2.3', rules: [{ id: 'scanmux/intel/cve' }] } },
+    tool: { driver: { name: 'ScanMux', version: '0.2.4', rules: [{ id: 'scanmux/intel/cve' }] } },
     originalUriBaseIds: { SRCROOT: { description: { text: 'Repository root; absolute location intentionally omitted.' } } },
     invocations: [{ executionSuccessful: !raised.some(isMatchable), ...(notifications.length ? { toolExecutionNotifications: notifications } : {}) }],
     properties: { 'scanmux/intel/v1': { sourceSha256: match.sourceSha256, sourceKind: match.sourceKind, matchedAt: match.matchedAt, maxAgeMs: match.maxAgeMs, storeDigest: match.storeDigest,
