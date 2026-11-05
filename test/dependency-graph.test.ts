@@ -150,6 +150,75 @@ const uvPackage = (name: string, version: string, body: string[] = []) => [
   '[[package]]', `name = "${name}"`, `version = "${version}"`, 'source = { registry = "https://pypi.org/simple" }', ...body,
   `sdist = { url = "https://files.example.invalid/${name}-${version}.tar.gz", hash = "sha256:${'0'.repeat(64)}", size = 1 }`, '',
 ];
+const mismatchFixtures = [
+  { ecosystem: 'npm', lockfile: 'package-lock.json', key: (name: string) => 'node_modules/' + name,
+    side: (spec: string, recorded: string, version: string, barSpec = '') => ({
+      'package.json': { dependencies: { foo: spec, ...(barSpec ? { bar: barSpec } : {}) } },
+      'package-lock.json': { lockfileVersion: 3, packages: {
+        '': { dependencies: { foo: recorded, ...(barSpec ? { bar: barSpec } : {}) } },
+        'node_modules/foo': pkg(version, { dependencies: { bar: '*' } }),
+        'node_modules/bar': pkg(version, { dependencies: { leaf: '*' } }),
+        ...(version === '1.0.0' ? {} : { 'node_modules/leaf': pkg(version) }), 'node_modules/other': pkg(version),
+      } },
+    }) },
+  { ecosystem: 'uv', lockfile: 'uv.lock', key: (name: string) => name,
+    side: (spec: string, recorded: string, version: string, barSpec = '') => ({
+      'pyproject.toml': `[project]\nname = "app"\ndependencies = ["foo${spec}"${barSpec ? `, "bar${barSpec}"` : ''}]\n`,
+      'uv.lock': ['version = 1', '[[package]]', 'name = "app"', 'source = { editable = "." }',
+        `dependencies = [{ name = "foo" }${barSpec ? ', { name = "bar" }' : ''}]`, '[package.metadata]',
+        `requires-dist = [{ name = "foo", specifier = "${recorded}" }${barSpec ? `, { name = "bar", specifier = "${barSpec}" }` : ''}]`, '',
+        ...uvPackage('foo', version, ['dependencies = [{ name = "bar" }]']),
+        ...uvPackage('bar', version, ['dependencies = [{ name = "leaf" }]']),
+        ...(version === '1.0.0' ? [] : uvPackage('leaf', version)), ...uvPackage('other', version),
+      ].join('\n'),
+    }) },
+];
+for (const { ecosystem, lockfile, key, side } of mismatchFixtures) {
+  for (const [form, recorded] of [['manifest disagreement', '>=1'], ['locked version excludes requirement', '>=3']]) test(`${ecosystem} explanations reject ${form} along changed and added paths`, () => {
+    const head = side('>=3', recorded!, '1.1.0'), project = only(side('>=1', '>=1', '1.0.0'), head);
+    const assessed = assessUpgrades(inputs(head), [{ lockfile, name: 'foo', version: '1.1.0', advisories: ['GHSA-test'], fixedVersions: ['3.1.0'], fixEvents: 'complete' }]);
+    assert.equal(assessed.projects[0]?.status, 'complete');
+    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason],
+      recorded === '>=1' ? ['undetermined', 'manifest_lock_mismatch'] : ['allowed', null]);
+    assert.deepEqual(project.status, { kind: 'complete' });
+    const changes = byKey(project);
+    assert.equal(changes.get(key('foo'))?.kind, 'version_changed'); assert.equal(changes.get(key('leaf'))?.kind, 'added');
+    for (const name of ['foo', 'bar', 'leaf']) assert.deepEqual(explanation(changes.get(key(name))), { state: 'undetermined', reason: 'manifest_lock_mismatch' });
+    assert.deepEqual(explanation(changes.get(key('other'))), { state: 'unexplained', reason: 'not_reachable' });
+    const added = byKey(only({}, head));
+    for (const name of ['foo', 'bar', 'leaf']) {
+      assert.equal(added.get(key(name))?.kind, 'added');
+      assert.deepEqual(explanation(added.get(key(name))), { state: 'undetermined', reason: 'manifest_lock_mismatch' });
+    }
+  });
+  test(`${ecosystem} explanations check unchanged direct requirements in the middle of a via chain`, () => {
+    const project = only(side('>=1', '>=1', '1.0.0', '>=3'), side('>=1.1', '>=1.1', '1.1.0', '>=3')), changes = byKey(project);
+    assert.deepEqual(explanation(changes.get(key('foo'))), { state: 'explained', via: ['foo@1.1.0'] });
+    for (const name of ['bar', 'leaf']) assert.deepEqual(explanation(changes.get(key(name))), { state: 'undetermined', reason: 'manifest_lock_mismatch' });
+    const unchanged = only(side('>=1', '>=1', '1.0.0'), side('>=1', '>=3', '1.1.0'));
+    for (const name of ['foo', 'bar', 'leaf']) assert.deepEqual(explanation(byKey(unchanged).get(key(name))), { state: 'unexplained', reason: 'not_reachable' });
+  });
+  test(`${ecosystem} explanations preserve satisfied and unjudgeable requirements and versions`, () => {
+    for (const [spec, version] of [['>=1.1', '1.1.0'], [ecosystem === 'npm' ? 'latest' : '===1.1.0', '1.1.0'], ['>=3', '1.1.0rc1']]) {
+      const project = only(side('>=1', '>=1', '1.0.0'), side(spec!, spec!, version!));
+      const validated = version === '1.1.0rc1' ? ['foo', 'bar', 'leaf'] : ['foo@1.1.0', 'bar@1.1.0', 'leaf@1.1.0'];
+      for (const [index, name] of ['foo', 'bar', 'leaf'].entries()) assert.deepEqual(explanation(byKey(project).get(key(name))), { state: 'explained', via: validated.slice(0, index + 1) });
+    }
+  });
+  test(`${ecosystem} explanations judge parsed exclusions even for repeated direct requirements`, () => {
+    const head = Object.fromEntries([...inputs(side('>=3', '>=3', '1.1.0'))].map(([file, value]) => [file, new TextDecoder().decode(value)]));
+    if (ecosystem === 'npm') {
+      const manifest = JSON.parse(head['package.json']!), lock = JSON.parse(head[lockfile]!);
+      manifest.devDependencies = { foo: '>=3' }; lock.packages[''].devDependencies = { foo: '>=3' };
+      head['package.json'] = JSON.stringify(manifest); head[lockfile] = JSON.stringify(lock);
+    } else {
+      head['pyproject.toml'] = head['pyproject.toml']!.replace('"foo>=3"', '"foo>=3", "foo>=3"');
+      head[lockfile] = head[lockfile]!.replace('{ name = "foo", specifier = ">=3" }', '{ name = "foo", specifier = ">=3" }, { name = "foo", specifier = ">=3" }');
+    }
+    for (const name of ['foo', 'bar', 'leaf']) assert.deepEqual(explanation(byKey(only(side('>=1', '>=1', '1.0.0'), head)).get(key(name))),
+      { state: 'undetermined', reason: 'manifest_lock_mismatch' });
+  });
+}
 function uvShaped(side: 'base' | 'head') {
   const head = side === 'head';
   const httpx = head ? '0.28' : '0.27';
@@ -272,6 +341,18 @@ test('uv workspace members share comparison and upgrade analysis with path-label
   assert.equal(assessed.projects[0]?.status, 'complete'); assert.equal(assessed.upgrades[0]?.state, 'allowed');
   for (const [left, right] of [[{}, head], [head, {}], [uvShaped('base'), head]]) {
     const diff = only(left!, right!); assert.deepEqual(diff.manifest, { base: null, head: null });
+  }
+});
+
+test('uv workspace explanations check path-labelled declaration agreement and locked versions', () => {
+  const base = uvWorkspace();
+  for (const recorded of ['>=1', '>=3']) {
+    const head = uvWorkspace('1.1', '>=3');
+    head['py/uv.lock'] = head['py/uv.lock']!.replace('specifier = ">=3"', `specifier = "${recorded}"`);
+    const project = only(base, head);
+    assert.deepEqual(project.status, { kind: 'complete' });
+    assert.deepEqual(project.requirements.map(item => [item.section, item.name]), [['servers/member:project.dependencies', 'example']]);
+    assert.deepEqual(explanation(byKey(project).get('example')), { state: 'undetermined', reason: 'manifest_lock_mismatch' });
   }
 });
 

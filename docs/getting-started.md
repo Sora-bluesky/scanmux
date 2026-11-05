@@ -321,7 +321,7 @@ node bin/scanmux.mjs deps /absolute/repo --config /absolute/controller.json --ba
 ```
 
 Each OSV finding in an npm v2/v3 or uv.lock v1 lockfile is `allowed` (declarations admit a newer fixed version; not a resolution or install proof), `blocked` or `undetermined` with a closed reason.
-With base/head, changed lockfile entries are classified; version changes and additions are explained by a path from a changed direct requirement or listed as unexplained.
+With base/head, changed lockfile entries are classified; version changes and additions are explained by a path from a changed direct requirement, listed as unexplained, or left undetermined. An otherwise explained entry becomes `undetermined` with `manifest_lock_mismatch` if any direct requirement on its head-side path disagrees with the lock's recorded requirement or the locked version violates that recorded requirement. Requirements or versions outside the supported parsing subset are not treated as violations.
 
 JSON uses `scanmux.dependencies/v2` and includes `tool: { name: "scanmux", version }` from the installed package. `advisories` has one entry per lockfile path, ecosystem, package name and OSV id. Status is `removed` (base only), `added` (head only), or `unchanged` (both, even across a version change); without a base it is `present`. `advisoryCounts` counts all four statuses. Text output lists added advisories first. A failed/incomplete side prevents advisory comparison and returns exit 2, even when no advisories were observed.
 

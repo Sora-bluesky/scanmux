@@ -312,6 +312,8 @@ uv workspaceの解析は、ルートに`[tool.uv.workspace]`宣言があるか�
 
 workspace宣言のある仮想ルートは`[project]`を省略でき、依存グループと解決設定だけを提供します。それ以外で`[project]`がなければ`manifest_invalid`です。メンバーの要求は節名に相対パスを付けて統合し、解決設定はルートのみ、sourcesは全メンバーから取得します。manifestのハッシュは全メンバーのmanifestを含みます。追加のファイル読み取りは行わず、既存の入力容量制限と除外条件を適用します。baseとheadは独立に判定します。npm workspaceの`workspaces_outside_subset`とアドバイザリ照合は変わりません。プロジェクトの状態が`complete`でも、manifestの要求とlockの一致は保証しません。単一プロジェクトでもworkspaceでも、不一致のある更新候補は別途`manifest_lock_mismatch`になります。更新先を解決・インストールできる証明にもなりません。
 
+依存関係の差分では、説明できる版の変更・追加でも、head側の経路上にある直接依存の要求がlock内の要求と異なるか、locked versionがその要求に違反すると判定できれば、`manifest_lock_mismatch`を理由に判定不能とします。判定できない制約・版は違反の根拠にしません。未説明の項目、プロジェクトの状態、更新判定、`missing`、終了コードは変わりません。
+
 ## 確かめていない点
 
 - Trivy の Windows 制限実行の試作では、DNS の名前解決の失敗（11001）と直接の TCP 接続の拒否（10013）を観測しました。UDP の `SendTo` 呼出しは成功しましたが、配送は観測していません。UDP の拒否と、すべての通信を遮断するという主張は未証明です。

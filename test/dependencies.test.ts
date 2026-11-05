@@ -194,6 +194,24 @@ test('removed or unchanged advisories give exit 0, even when upgrade analysis is
   assert.equal(report.advisories[0]!.severity, null); assert.deepEqual(report.advisories[0]!.fixedVersions, []);
 });
 
+test('manifest-lock explanation mismatches are counted and printed without changing missing or exits', async () => {
+  for (const recorded of ['>=1', '>=3']) for (const vulnerable of [false, true]) {
+    const headFiles = { ...files('1.1.0'), 'package.json': '{"dependencies":{"example":">=3"}}',
+      'package-lock.json': lock('1.1.0', {}, { dependencies: { example: recorded } }) };
+    const f = await fixture({ headFiles, advisories: version => vulnerable && version === '1.1.0' ? [advisory('GHSA-added', 'HIGH', ['3.1.0'])] : [] });
+    const report = await f.analyze();
+    assert.equal(report.exitCode, vulnerable ? 10 : 0); assert.deepEqual(report.missing, []);
+    assert.equal(report.schema, 'scanmux.dependencies/v2'); assert.equal(report.projects[0]?.status, 'complete');
+    assert.equal(report.diffCounts?.explained, 0); assert.equal(report.diffCounts?.undeterminedExplanations, 1);
+    const text = f.text(report);
+    assert.match(text, /Diff: .* explained=0 unexplained=0 undetermined=1/);
+    assert.match(text, /node_modules\/example  version_changed  undetermined:manifest_lock_mismatch/);
+    assert.equal(text.includes('Missing:'), false);
+    if (vulnerable) assert.deepEqual([report.upgrades[0]?.state, report.upgrades[0]?.reason],
+      recorded === '>=1' ? ['undetermined', 'manifest_lock_mismatch'] : ['allowed', null]);
+  }
+});
+
 test('without a base, advisories are present and exit 10; clean head exits 0', async () => {
   const vulnerable = await fixture({ advisories: () => [advisory('GHSA-present', 'LOW')] }), report = await vulnerable.analyze(false);
   assert.equal(report.exitCode, 10); assert.equal(report.advisories[0]!.status, 'present'); assert.equal(report.advisories[0]!.baseVersion, null);

@@ -14,7 +14,7 @@ export interface RequirementChange { readonly section: string; readonly name: st
 export type Explanation =
   | { readonly state: 'explained'; readonly via: readonly string[] }
   | { readonly state: 'unexplained'; readonly reason: 'reachable_only_via_unchanged' | 'not_reachable' }
-  | { readonly state: 'undetermined'; readonly reason: 'manifest_undetermined' | 'settings_unreadable' | 'overrides_changed' | 'via_limit' };
+  | { readonly state: 'undetermined'; readonly reason: 'manifest_undetermined' | 'manifest_lock_mismatch' | 'settings_unreadable' | 'overrides_changed' | 'via_limit' };
 export type MetadataField = 'flags' | 'artifact' | 'declared_dependencies' | 'other';
 export type DependencyChange =
   | { readonly kind: 'version_changed'; readonly key: string; readonly name: string; readonly from: string | null; readonly to: string | null; readonly explanation: Explanation }
@@ -515,7 +515,7 @@ const requirementChange = ({ before, after }: ReturnType<typeof changedRequireme
 };
 
 const ref = (node: Node) => node.version === null ? node.name : `${node.name}@${node.version}`;
-function explainer(graph: Graph, starts: readonly string[], touched: ReadonlySet<string>) {
+function explainer(graph: Graph, starts: readonly string[], touched: ReadonlySet<string>, mismatched: ReadonlySet<string>) {
   const search = (restricted: boolean) => {
     const parent = new Map<string, string | null>(starts.map(start => [start, null]));
     const queue = [...starts];
@@ -531,8 +531,10 @@ function explainer(graph: Graph, starts: readonly string[], touched: ReadonlySet
   return (key: string): Explanation => {
     if (restricted.has(key)) {
       const chain: string[] = [];
-      for (let current: string | null = key; current !== null; current = restricted.get(current)!) chain.unshift(ref(graph.nodes.get(current)!));
-      return chain.length > dependencyLimits.via ? { state: 'undetermined', reason: 'via_limit' } : { state: 'explained', via: chain };
+      for (let current: string | null = key; current !== null; current = restricted.get(current)!) chain.unshift(current);
+      return chain.length > dependencyLimits.via ? { state: 'undetermined', reason: 'via_limit' }
+        : chain.some(key => mismatched.has(key)) ? { state: 'undetermined', reason: 'manifest_lock_mismatch' }
+        : { state: 'explained', via: chain.map(key => ref(graph.nodes.get(key)!)) };
     }
     return { state: 'unexplained', reason: reachable.has(key) ? 'reachable_only_via_unchanged' : 'not_reachable' };
   };
@@ -706,7 +708,14 @@ function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side
   const changedDeclarations = new Set(changed.flatMap(({ after }) => after ? [after.group + '\0' + after.name] : []));
   const starts = [...new Set([...head.nodes.values()].filter(node => node.root).flatMap(node => (head.edges.get(node.key) ?? [])
     .flatMap(edge => edge.to !== null && edge.groups.some(group => changedDeclarations.has(group + '\0' + edge.name)) ? [edge.to] : [])))].sort(compareText);
-  const explain = explainer(head, starts, touched);
+  const mismatched = new Set<string>();
+  if (manifests.head.kind === 'determined') for (const from of head.nodes.values()) if (from.root) for (const edge of head.edges.get(from.key) ?? []) {
+    if (edge.to === null) continue;
+    const node = head.nodes.get(edge.to)!, version = node.version === null ? null : parseVersion(ecosystem, node.version);
+    if (!sameDirect(manifests.head.direct.get(edge.name), head.direct.get(edge.name))
+      || version && edge.constraints !== 'not_recorded' && edge.constraints.some(({ spec }) => spec.ok && !admitsVersion(spec.value, version))) mismatched.add(node.key);
+  }
+  const explain = explainer(head, starts, touched, mismatched);
   const undetermined = manifests.base.kind === 'undetermined' || manifests.head.kind === 'undetermined' || head.workspaces || !!base?.workspaces;
   const unreadable = !settings.base.readable || !settings.head.readable;
   const manifestOverrides = manifests.base.kind === 'determined' && manifests.head.kind === 'determined'
