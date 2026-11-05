@@ -1,6 +1,6 @@
 {
   "name": "scanmux",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local security scanner orchestration with explicit coverage and evidence",
   "type": "module",
   "private": true,
