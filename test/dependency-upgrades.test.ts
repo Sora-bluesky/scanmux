@@ -163,6 +163,58 @@ test('direct requirements come from the manifest; a manifest that disagrees with
   assert.deepEqual(verdict(assess(files, uvFinding())), mismatch);
 });
 
+for (const { ecosystem, files, fields, excludes, admits } of [
+  { ecosystem: 'npm', excludes: '>=5', admits: '>=4', fields: finding({ fixedVersions: ['5.1.0'] }),
+    files: (spec: string, overrides = false) => npm({ root: { lodash: spec }, manifest: overrides ? { overrides: { lodash: '5.1.0' } } : {} }) },
+  { ecosystem: 'uv', excludes: '>=3', admits: '>=2', fields: finding(uvFinding({ fixedVersions: ['3.1.0'] })),
+    files: (spec: string, overrides = false) => uvRaw([`dependencies = ["requests${spec}"]`], requestsRoot(`{ name = "requests", specifier = "${spec}" }`),
+      { tail: overrides ? '[tool.uv]\noverride-dependencies = ["requests==3.1.0"]\n' : '' }) },
+]) {
+  test(`${ecosystem} a locked version violating its recorded root constraint is manifest_lock_mismatch`, () => {
+    const report = assessUpgrades(inputs(files(excludes)), [fields]);
+    assert.deepEqual(verdict(report.upgrades[0]!), ['undetermined', 'manifest_lock_mismatch']);
+    assert.deepEqual(report.upgrades[0]!.instances.map(item => [item.state, item.reason]), [['undetermined', 'manifest_lock_mismatch']]);
+    assert.deepEqual(report.projects, [{ lockfile: fields.lockfile, ecosystem, status: 'complete', reason: null }]);
+  });
+  test(`${ecosystem} a locked version satisfying its recorded root constraint stays allowed`, () => {
+    const row = assess(files(admits), fields);
+    assert.deepEqual([row.state, row.reason, row.target], ['allowed', null, fields.fixedVersions[0]]);
+  });
+  test(`${ecosystem} overrides_declared keeps priority over a violated recorded root constraint`, () => {
+    assert.deepEqual(verdict(assess(files(excludes, true), fields)), ['undetermined', 'overrides_declared']);
+  });
+  test(`${ecosystem} no_recorded_fix keeps priority over a violated recorded root constraint`, () => {
+    assert.deepEqual(verdict(assess(files(excludes), { ...fields, fixedVersions: [] })), ['undetermined', 'no_recorded_fix']);
+  });
+  test(`${ecosystem} no_newer_fixed_version keeps priority over a violated recorded root constraint`, () => {
+    assert.deepEqual(verdict(assess(files(excludes), { ...fields, fixedVersions: [fields.version], fixEvents: 'complete' })), ['blocked', 'no_newer_fixed_version']);
+  });
+}
+
+test('bundled_by_parent keeps priority over a violated recorded root constraint', () => {
+  const files = npm({ root: { lodash: '>=5' }, packages: { 'node_modules/lodash': pkg('4.17.20', { inBundle: true }) } });
+  assert.deepEqual(verdict(assess(files, { fixedVersions: ['5.1.0'] })), ['blocked', 'bundled_by_parent']);
+});
+
+test('a recorded transitive constraint that excludes the locked version keeps its existing upgrade judgment', () => {
+  const files = npm({ root: { a: '^1.0.0' }, packages: { 'node_modules/a': pkg('1.0.0', { dependencies: { lodash: '>=5' } }) } });
+  assert.deepEqual(verdict(assess(files, { fixedVersions: ['5.1.0'] })), ['allowed', null]);
+});
+
+test('uv marker forks keep conditional_requirement when another branch excludes the locked version', () => {
+  const low = "python_full_version < '3.12'", high = "python_full_version >= '3.12'";
+  for (const markedEdge of [false, true]) {
+    const edge = (version: string, marker: string) => `{ name = "requests", version = "${version}"${markedEdge ? `, marker = "${marker}"` : ''} }`;
+    const files = uvRaw([`dependencies = ["requests<3; ${low}", "requests>=3; ${high}"]`],
+      requestsRoot(`{ name = "requests", specifier = "<3", marker = "${low}" }, { name = "requests", specifier = ">=3", marker = "${high}" }`,
+        `${edge('2.30.0', low)}, ${edge('3.0.0', high)}`),
+      { packages: ['[[package]]', 'name = "requests"', 'version = "2.30.0"', registry, '', '[[package]]', 'name = "requests"', 'version = "3.0.0"', registry, ''] });
+    for (const version of ['2.30.0', '3.0.0']) assert.deepEqual(verdict(assess(files, uvFinding({ version, fixedVersions: ['3.1.0'] }))), ['undetermined', 'conditional_requirement']);
+  }
+  const marked = uvRaw(['dependencies = ["requests>=3"]'], requestsRoot('{ name = "requests", specifier = ">=3" }', `{ name = "requests", marker = "${high}" }`));
+  assert.deepEqual(verdict(assess(marked, uvFinding({ fixedVersions: ['3.1.0'] }))), ['undetermined', 'conditional_requirement']);
+});
+
 test('repository uv constraints, overrides and dependency metadata are declared overrides', () => {
   const declared = ['undetermined', 'overrides_declared'];
   const cases: Record<string, unknown>[] = [

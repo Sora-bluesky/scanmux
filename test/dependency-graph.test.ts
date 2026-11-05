@@ -178,8 +178,7 @@ for (const { ecosystem, lockfile, key, side } of mismatchFixtures) {
     const head = side('>=3', recorded!, '1.1.0'), project = only(side('>=1', '>=1', '1.0.0'), head);
     const assessed = assessUpgrades(inputs(head), [{ lockfile, name: 'foo', version: '1.1.0', advisories: ['GHSA-test'], fixedVersions: ['3.1.0'], fixEvents: 'complete' }]);
     assert.equal(assessed.projects[0]?.status, 'complete');
-    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason],
-      recorded === '>=1' ? ['undetermined', 'manifest_lock_mismatch'] : ['allowed', null]);
+    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason], ['undetermined', 'manifest_lock_mismatch']);
     assert.deepEqual(project.status, { kind: 'complete' });
     const changes = byKey(project);
     assert.equal(changes.get(key('foo'))?.kind, 'version_changed'); assert.equal(changes.get(key('leaf'))?.kind, 'added');

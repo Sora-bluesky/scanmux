@@ -724,9 +724,7 @@ function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side
       if (!version) continue;
       const manifestExcludes = edge.groups.some(group => (declarations.get(group + '\0' + edge.name) ?? [])
         .some(({ spec, view }) => view.markerSha256 === null && spec.ok && !admitsVersion(spec.value, version)));
-      const recordedExcludes = edge.constraints !== 'not_recorded'
-        && edge.constraints.some(({ spec, marker }) => !marker && spec.ok && !admitsVersion(spec.value, version));
-      if (manifestExcludes || recordedExcludes) mismatched.add(node.key);
+      if (manifestExcludes || recordedExcludes(edge, version)) mismatched.add(node.key);
     }
     for (const node of head.nodes.values()) if (missing.has(node.name)) mismatched.add(node.key);
   }
@@ -834,6 +832,10 @@ const parseVersion = (ecosystem: Ecosystem, text: string): Version | null => {
   return parsed.ok ? parsed.value : null;
 };
 const admitsVersion = admits as (spec: Spec, version: Version) => boolean;
+function recordedExcludes(edge: Edge, version: Version): boolean {
+  return !edge.marker && edge.constraints !== 'not_recorded'
+    && edge.constraints.some(({ spec, marker }) => !marker && spec.ok && !admitsVersion(spec.value, version));
+}
 type Verdict = 'admits' | 'excludes' | 'marker' | 'not_recorded' | 'outside' | 'duplicate';
 interface Incoming { readonly from: Node; readonly edge: Edge }
 interface Judged { readonly verdict: Verdict; readonly spec: Spec | null }
@@ -865,8 +867,9 @@ function assessInstance(project: LoadedProject, graph: Graph, node: Node, findin
   if (!candidates.length) return finding.fixEvents === 'complete' ? result('blocked', 'no_newer_fixed_version') : result('undetermined', 'fix_events_incomplete');
   if (node.bundled) return result('blocked', 'bundled_by_parent');
   if (project.overrides) return result('undetermined', 'overrides_declared');
-  if (project.mismatched.has(node.name) && (ecosystem === 'uv' || node.key === npmKey([node.name]))) return result('undetermined', 'manifest_lock_mismatch');
   const incoming: Incoming[] = [...graph.edges].flatMap(([from, list]) => list.filter(edge => edge.to === node.key).map(edge => ({ from: graph.nodes.get(from)!, edge })));
+  if (project.mismatched.has(node.name) && (ecosystem === 'uv' || node.key === npmKey([node.name]))) return result('undetermined', 'manifest_lock_mismatch');
+  if (incoming.some(({ from, edge }) => from.root && recordedExcludes(edge, current))) return result('undetermined', 'manifest_lock_mismatch');
   if (!incoming.length || project.unresolved.has(node.name)) return result('undetermined', 'incoming_edges_incomplete');
   const evaluated = candidates.map(candidate => ({ candidate, verdicts: incoming.map(item => ({ item, judged: verdict(item, candidate.version!) })) }));
   const passing = evaluated.find(entry => entry.verdicts.every(item => item.judged.verdict === 'admits'));
