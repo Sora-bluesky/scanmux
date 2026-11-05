@@ -228,6 +228,20 @@ for (const { ecosystem, lockfile, key, side } of mismatchFixtures) {
     for (const name of ['bar', 'leaf']) assert.deepEqual(explanation(changes.get(key(name))),
       { state: 'undetermined', reason: 'manifest_lock_mismatch' });
   });
+  test(`${ecosystem} explanations preserve unjudgeable manifest-only direct requirements`, () => {
+    const barSpec = ecosystem === 'npm' ? 'latest' : '===2.0';
+    const fixture = (version: string, spec: string) => {
+      const files = Object.fromEntries([...inputs(side(spec, spec, version, barSpec))].map(([file, value]) => [file, new TextDecoder().decode(value)]));
+      if (ecosystem === 'npm') {
+        const lock = JSON.parse(files[lockfile]!); delete lock.packages[''].dependencies.bar;
+        files[lockfile] = JSON.stringify(lock);
+      } else files[lockfile] = files[lockfile]!.replace(', { name = "bar" }', '').replace(`, { name = "bar", specifier = "${barSpec}" }`, '');
+      return files;
+    };
+    const changes = byKey(only(fixture('1.0.0', '>=1'), fixture('1.1.0', '>=1.1')));
+    for (const [index, name] of ['foo', 'bar', 'leaf'].entries()) assert.deepEqual(explanation(changes.get(key(name))),
+      { state: 'explained', via: ['foo@1.1.0', 'bar@1.1.0', 'leaf@1.1.0'].slice(0, index + 1) });
+  });
   test(`${ecosystem} explanations judge parsed exclusions even for repeated direct requirements`, () => {
     const head = Object.fromEntries([...inputs(side('>=3', '>=3', '1.1.0'))].map(([file, value]) => [file, new TextDecoder().decode(value)]));
     if (ecosystem === 'npm') {

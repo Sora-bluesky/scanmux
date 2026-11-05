@@ -715,7 +715,7 @@ function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side
     for (const requirement of manifests.head.requirements.values()) {
       const key = requirement.group + '\0' + requirement.name;
       declarations.set(key, [...declarations.get(key) ?? [], ...requirement.declarations]);
-      if (requirement.declarations.some(item => item.view.markerSha256 === null)) missing.add(requirement.name);
+      if (requirement.declarations.some(item => item.view.markerSha256 === null && item.spec.ok)) missing.add(requirement.name);
     }
     for (const from of head.nodes.values()) if (from.root) for (const edge of head.edges.get(from.key) ?? []) {
       missing.delete(edge.name);
