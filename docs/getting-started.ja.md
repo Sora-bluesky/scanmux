@@ -314,7 +314,7 @@ node bin/scanmux.mjs deps /absolute/repo --config /absolute/controller.json --ba
 
 npm v2/v3とuv.lock v1のOSV指摘ごとに、`allowed`（宣言が新しい修正版を許す。
 解決・installの証明ではない）・`blocked`・`undetermined`を定められた理由付きで返します。
-base/headでは変更されたlockfile項目を分類し、版の変更と追加を、変更された直接依存からの経路で説明するか、未説明・判定不能として列挙します。説明できる経路でも、head側の経路上にある直接依存の要求がlock内の要求と異なるか、locked versionがlock内の要求を満たさない場合は、`manifest_lock_mismatch`を理由に`undetermined`とします。対応する解析範囲外の要求・版は、違反とは扱いません。
+base/headでは変更されたlockfile項目を分類し、版の変更と追加を、変更された直接依存からの経路で説明するか、未説明・判定不能として列挙します。説明できる経路でも、head側の経路上の版が、ルートからの辺と同じグループ・節にあるhead manifestの要求、またはその辺にlockが記録した制約を満たさないと判定できる場合は、`manifest_lock_mismatch`を理由に`undetermined`とします。対象は無条件で判定可能な要求・制約です。manifestに直接宣言された名前が経路上にあり、lockにその名前のルート辺がない場合も同じ理由になります。marker付きの要求・辺や判定できない要求・版は違反の根拠にせず、版を許容する範囲式の表記・順序の違いも違反としません。
 JSONは`scanmux.dependencies/v2`で、インストール済みパッケージから取得した`tool: { name: "scanmux", version }`を含みます。`advisories`はlockfileパス・ecosystem・パッケージ名・OSV IDごとに1件です。`status`は`removed`（baseだけ）、`added`（headだけ）、`unchanged`（両側。版が変わっても同じ）で、base未指定なら`present`です。`advisoryCounts`で4種類を集計し、テキストでは追加分を先に表示します。片側でも検査が失敗・未完了なら脆弱性情報を比較せず、観測が0件でも終了値2にします。
 
 各項目には`baseVersion`・`headVersion`（存在しなければnull。複数の版はソートして`, `で連結）、`id`・`aliases`・`severity`（レコードの`database_specific.severity`。なければnull。スコアは計算しない）、該当するaffected範囲の修正版`fixedVersions`（記録がなければ空配列）が入ります。`dev`はnpm lockfileの`dev`・`devOptional`から読み、headにパッケージがあればhead、なければbaseを使います。該当する全インスタンスが開発用の場合だけtrue、それ以外のecosystemではnullです。npm v2/v3のlockfileで宣言されたlink・workspaceパッケージはローカルと判定し、オフライン照合の欠けに数えません。ローカルと宣言されていない版なしパッケージは未完了のままです。npm workspaceのプロジェクト解析は、引き続き`workspaces_outside_subset`で`undetermined`になります。

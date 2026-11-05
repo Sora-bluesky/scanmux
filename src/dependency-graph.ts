@@ -52,7 +52,7 @@ export function dependencyInputPath(file: string): boolean {
   try { return inputNames.has(path.posix.basename(safeRelative(file))); } catch { return false; }
 }
 
-interface Declaration { readonly canonical: string; readonly view: DeclarationView }
+interface Declaration { readonly canonical: string; readonly view: DeclarationView; readonly spec: Parsed<Spec> }
 interface Requirements { readonly section: string; readonly group: string; readonly name: string; readonly declarations: Declaration[] }
 // Direct declarations per name, as comparable strings, so a manifest and a lockfile root can be checked for agreement.
 type Direct = ReadonlyMap<string, readonly string[]>;
@@ -105,6 +105,7 @@ function declaration(spec: Parsed<Spec>, raw: string, extras: readonly string[] 
   const markerSha256 = marker === null ? null : hash(marker);
   const body = spec.ok ? 'r:' + renderSpec(spec.value) : 'x:' + spec.reason + ':' + hash(raw);
   return {
+    spec,
     canonical: [extras.join(','), body, markerSha256 ?? ''].join('|'),
     view: { spec: spec.ok ? renderSpec(spec.value) : null, reason: spec.ok ? null : spec.reason, extras, markerSha256 },
   };
@@ -709,11 +710,25 @@ function diffProject(lockfile: string, ecosystem: Ecosystem, sides: { base: Side
   const starts = [...new Set([...head.nodes.values()].filter(node => node.root).flatMap(node => (head.edges.get(node.key) ?? [])
     .flatMap(edge => edge.to !== null && edge.groups.some(group => changedDeclarations.has(group + '\0' + edge.name)) ? [edge.to] : [])))].sort(compareText);
   const mismatched = new Set<string>();
-  if (manifests.head.kind === 'determined') for (const from of head.nodes.values()) if (from.root) for (const edge of head.edges.get(from.key) ?? []) {
-    if (edge.to === null) continue;
-    const node = head.nodes.get(edge.to)!, version = node.version === null ? null : parseVersion(ecosystem, node.version);
-    if (!sameDirect(manifests.head.direct.get(edge.name), head.direct.get(edge.name))
-      || version && edge.constraints !== 'not_recorded' && edge.constraints.some(({ spec }) => spec.ok && !admitsVersion(spec.value, version))) mismatched.add(node.key);
+  if (manifests.head.kind === 'determined') {
+    const declarations = new Map<string, Declaration[]>(), missing = new Set<string>();
+    for (const requirement of manifests.head.requirements.values()) {
+      const key = requirement.group + '\0' + requirement.name;
+      declarations.set(key, [...declarations.get(key) ?? [], ...requirement.declarations]);
+      if (requirement.declarations.some(item => item.view.markerSha256 === null)) missing.add(requirement.name);
+    }
+    for (const from of head.nodes.values()) if (from.root) for (const edge of head.edges.get(from.key) ?? []) {
+      missing.delete(edge.name);
+      if (edge.to === null || edge.marker) continue;
+      const node = head.nodes.get(edge.to)!, version = node.version === null ? null : parseVersion(ecosystem, node.version);
+      if (!version) continue;
+      const manifestExcludes = edge.groups.some(group => (declarations.get(group + '\0' + edge.name) ?? [])
+        .some(({ spec, view }) => view.markerSha256 === null && spec.ok && !admitsVersion(spec.value, version)));
+      const recordedExcludes = edge.constraints !== 'not_recorded'
+        && edge.constraints.some(({ spec, marker }) => !marker && spec.ok && !admitsVersion(spec.value, version));
+      if (manifestExcludes || recordedExcludes) mismatched.add(node.key);
+    }
+    for (const node of head.nodes.values()) if (missing.has(node.name)) mismatched.add(node.key);
   }
   const explain = explainer(head, starts, touched, mismatched);
   const undetermined = manifests.base.kind === 'undetermined' || manifests.head.kind === 'undetermined' || head.workspaces || !!base?.workspaces;

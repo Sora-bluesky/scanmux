@@ -199,11 +199,34 @@ for (const { ecosystem, lockfile, key, side } of mismatchFixtures) {
     for (const name of ['foo', 'bar', 'leaf']) assert.deepEqual(explanation(byKey(unchanged).get(key(name))), { state: 'unexplained', reason: 'not_reachable' });
   });
   test(`${ecosystem} explanations preserve satisfied and unjudgeable requirements and versions`, () => {
-    for (const [spec, version] of [['>=1.1', '1.1.0'], [ecosystem === 'npm' ? 'latest' : '===1.1.0', '1.1.0'], ['>=3', '1.1.0rc1']]) {
-      const project = only(side('>=1', '>=1', '1.0.0'), side(spec!, spec!, version!));
+    for (const [spec, recorded, version] of [['>=1.1', '>=1', '1.1.0'],
+      [ecosystem === 'npm' ? '>=1 <3' : '>=1,<3', ecosystem === 'npm' ? '<3 >=1' : '<3,>=1', '1.1.0'],
+      [ecosystem === 'npm' ? '^1.0.0' : '~=1.0', ecosystem === 'npm' ? '>=1.0.0 <2.0.0' : '>=1,<2', '1.1.0'],
+      [ecosystem === 'npm' ? 'latest' : '===1.1.0', '>=1', '1.1.0'],
+      ['>=1.1', ecosystem === 'npm' ? 'latest' : '===1.1.0', '1.1.0'], ['>=3', '>=1', '1.1.0rc1']]) {
+      const project = only(side('>=1', '>=1', '1.0.0'), side(spec!, recorded!, version!));
       const validated = version === '1.1.0rc1' ? ['foo', 'bar', 'leaf'] : ['foo@1.1.0', 'bar@1.1.0', 'leaf@1.1.0'];
       for (const [index, name] of ['foo', 'bar', 'leaf'].entries()) assert.deepEqual(explanation(byKey(project).get(key(name))), { state: 'explained', via: validated.slice(0, index + 1) });
     }
+  });
+  test(`${ecosystem} explanations reject an excluding recorded constraint even when the manifest admits the version`, () => {
+    const changes = byKey(only(side('>=1', '>=1', '1.0.0'), side('>=1.1', '>=3', '1.1.0')));
+    for (const name of ['foo', 'bar', 'leaf']) assert.deepEqual(explanation(changes.get(key(name))),
+      { state: 'undetermined', reason: 'manifest_lock_mismatch' });
+  });
+  test(`${ecosystem} explanations detect a manifest-only direct requirement in a via chain`, () => {
+    const fixture = (version: string, spec: string) => {
+      const files = Object.fromEntries([...inputs(side(spec, spec, version, '>=1'))].map(([file, value]) => [file, new TextDecoder().decode(value)]));
+      if (ecosystem === 'npm') {
+        const lock = JSON.parse(files[lockfile]!); delete lock.packages[''].dependencies.bar;
+        files[lockfile] = JSON.stringify(lock);
+      } else files[lockfile] = files[lockfile]!.replace(', { name = "bar" }', '').replace(', { name = "bar", specifier = ">=1" }', '');
+      return files;
+    };
+    const changes = byKey(only(fixture('1.0.0', '>=1'), fixture('1.1.0', '>=1.1')));
+    assert.deepEqual(explanation(changes.get(key('foo'))), { state: 'explained', via: ['foo@1.1.0'] });
+    for (const name of ['bar', 'leaf']) assert.deepEqual(explanation(changes.get(key(name))),
+      { state: 'undetermined', reason: 'manifest_lock_mismatch' });
   });
   test(`${ecosystem} explanations judge parsed exclusions even for repeated direct requirements`, () => {
     const head = Object.fromEntries([...inputs(side('>=3', '>=3', '1.1.0'))].map(([file, value]) => [file, new TextDecoder().decode(value)]));
@@ -219,6 +242,62 @@ for (const { ecosystem, lockfile, key, side } of mismatchFixtures) {
       { state: 'undetermined', reason: 'manifest_lock_mismatch' });
   });
 }
+test('uv explanations preserve marker forks and inactive conditional requirements', () => {
+  const fixture = (head: boolean, fork: boolean, edgeMarker: boolean) => {
+    const low = head ? '2.1' : '2.0', high = head ? '3.1' : '3.0', spec = head ? '>=3.1' : '>=3';
+    return {
+      'pyproject.toml': `[project]\nname = "app"\ndependencies = ["foo${spec}; python_full_version >= '3.12'", "foo<3; python_full_version < '3.12'"]\n`,
+      'uv.lock': ['version = 1', 'requires-python = ">=3.12"', '[[package]]', 'name = "app"', 'source = { editable = "." }',
+        'dependencies = [' + (fork ? `{ name = "foo", version = "${low}", marker = "python_full_version < \'3.12\'" }, ` : '')
+          + `{ name = "foo", version = "${high}"${edgeMarker ? ', marker = "python_full_version >= \'3.12\'"' : ''} }]`,
+        '[package.metadata]', `requires-dist = [{ name = "foo", specifier = "${spec}", marker = "python_full_version >= '3.12'" }, { name = "foo", specifier = "<3", marker = "python_full_version < '3.12'" }]`,
+        ...(fork ? uvPackage('foo', low) : []), ...uvPackage('foo', high),
+      ].join('\n'),
+    };
+  };
+  for (const fork of [false, true]) for (const edgeMarker of [false, true]) {
+    const project = only(fixture(false, fork, edgeMarker), fixture(true, fork, edgeMarker));
+    assert.deepEqual(project.status, { kind: 'complete' });
+    for (const version of fork ? ['2.1', '3.1'] : ['3.1']) assert.deepEqual(explanation(byKey(project).get(fork ? 'foo@' + version : 'foo')),
+      { state: 'explained', via: ['foo@' + version] });
+  }
+});
+
+test('uv explanations ignore conditional manifest requirements and marked root edges independently', () => {
+  for (const markedEdge of [false, true]) {
+    const fixture = (head: boolean) => ({
+      'pyproject.toml': `[project]\nname = "app"\ndependencies = ["foo${head ? '>=3' : '>=2'}${markedEdge ? '' : "; python_version < '3.10'"}"]\n`,
+      'uv.lock': ['version = 1', '[[package]]', 'name = "app"', 'source = { editable = "." }',
+        `dependencies = [{ name = "foo"${markedEdge ? ', marker = "python_version < \'3.10\'"' : ''} }]`,
+        '[package.metadata]', `requires-dist = [{ name = "foo", specifier = "${markedEdge ? '>=3' : '>=1'}" }]`,
+        ...uvPackage('foo', head ? '1.1' : '1.0'),
+      ].join('\n'),
+    });
+    assert.deepEqual(explanation(byKey(only(fixture(false), fixture(true))).get('foo')), { state: 'explained', via: ['foo@1.1'] });
+  }
+});
+
+test('uv explanations match workspace groups to their resolved versions', () => {
+  const fixture = (head: boolean) => {
+    const spec = head ? '>=1.2,<2' : '>=1,<2', version = head ? '1.2' : '1.1';
+    return {
+      'pyproject.toml': `[project]\nname = "root"\n[dependency-groups]\nlegacy = ["foo${spec}"]\n[tool.uv.workspace]\nmembers = ["members/*"]\n`,
+      'members/one/pyproject.toml': '[project]\nname = "member"\n[project.optional-dependencies]\nmodern = ["foo>=9"]\n',
+      'uv.lock': ['version = 1', '[manifest]', 'members = ["root", "member"]', '[[package]]', 'name = "root"', 'source = { editable = "." }',
+        '[package.dev-dependencies]', `legacy = [{ name = "foo", version = "${version}" }]`,
+        '[package.metadata.requires-dev]', `legacy = [{ name = "foo", specifier = "${spec}" }]`,
+        '[[package]]', 'name = "member"', 'source = { editable = "members/one" }',
+        '[package.optional-dependencies]', 'modern = [{ name = "foo", version = "2.1" }]',
+        '[package.metadata]', 'requires-dist = [{ name = "foo", specifier = ">=2,<3", marker = "extra == \'modern\'" }]',
+        ...uvPackage('foo', version), ...uvPackage('foo', '2.1'),
+      ].join('\n'),
+    };
+  };
+  const project = only(fixture(false), fixture(true));
+  assert.deepEqual(project.status, { kind: 'complete' });
+  assert.deepEqual(explanation(byKey(project).get('foo@1.2')), { state: 'explained', via: ['foo@1.2'] });
+});
+
 function uvShaped(side: 'base' | 'head') {
   const head = side === 'head';
   const httpx = head ? '0.28' : '0.27';
