@@ -23,6 +23,7 @@ import type { Report } from '../src/model.ts';
 
 // Synthetic native owner: actual lifecycle/admission/record code, no Docker or target
 // executable. These tests establish coordination and fail-closed evidence, not Linux isolation.
+const fixtureMaxOutputBytes = 1048576;
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n');
 const base = 'a'.repeat(40), head = 'b'.repeat(40), selection = { engine: 'codex-security' as const, fingerprint: 'f'.repeat(64) };
 const testFile = { path: 'tests/repro/test.mjs', mode: '100644' as const, bytes: 30, sha256: hash('user nominated regression oracle') };
@@ -33,7 +34,7 @@ class FakeProcess extends EventEmitter {
   kill() { this.stdout.end(); this.stderr.end(); setImmediate(() => this.emit('close', 0)); return true; }
 }
 type Scenario = 'pair' | 'base_negative' | 'still' | 'missing' | 'image' | 'head_missing' | 'head_changed' | 'failed' | 'changed' | 'cleanup' | 'mutated' | 'binding_changed' | 'binding_missing';
-async function fixture(t: import('node:test').TestContext, scenario: Scenario, retainedBytes = 1048576, severity: 'critical' | 'medium' = 'critical', twoFindings = false) {
+async function fixture(t: import('node:test').TestContext, scenario: Scenario, retainedBytes = 16 * fixtureMaxOutputBytes, severity: 'critical' | 'medium' = 'critical', twoFindings = false) {
   const directory = await mkdtemp(path.join(tmpdir(), 'repro-')), target = path.join(directory, 'target'); await mkdir(target);
   const controllerTemp = path.join(directory, 'tmp'); await mkdir(controllerTemp);
   const previousTemp = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
@@ -45,7 +46,7 @@ async function fixture(t: import('node:test').TestContext, scenario: Scenario, r
     docker: { tool, endpoint: process.platform === 'win32' ? 'npipe:////./pipe/dockerDesktopLinuxEngine' : 'unix:///var/run/docker.sock' }, image: 'sha256:' + 'd'.repeat(64),
     runtime: { nodeVersion: '24.22.1', python: { path: '/usr/bin/python3', version: '3.11.2', sha256: 'e'.repeat(64) }, git: { path: '/usr/bin/git', version: '2.54.0', sha256: 'e'.repeat(64) } },
     tools: { gitleaks: { path: leakPath, sha256: hash('synthetic gitleaks'), version: '8.30.1' } }, osvDatabase: null,
-    scan: { timeoutMs: 1000, maxOutputBytes: 65536, maxFileBytes: 65536, maxSnapshotBytes: 1048576, maxFiles: 100 },
+    scan: { timeoutMs: 1000, maxOutputBytes: fixtureMaxOutputBytes, maxFileBytes: 65536, maxSnapshotBytes: 1048576, maxFiles: 100 },
     limits: { cpuCount: 1, memoryBytes: 268435456, tmpBytes: 8388608, workBytes: 16777216, shmBytes: 1048576, pids: 64, wallMs: 10000, cleanupTimeoutMs: 10000, retainedBytes } };
   const profilePath = path.join(directory, 'profile.json'); await writeFile(profilePath, encode(profile));
   const mappedRoot = '/repo/' + hash(target);
@@ -151,7 +152,7 @@ async function fixture(t: import('node:test').TestContext, scenario: Scenario, r
         const create = job.args, mounts = create.flatMap((arg, i) => arg === '--mount' ? [Object.fromEntries(create[i + 1].split(',').map(part => part.split('=')))] : []);
         finish(0, JSON.stringify([{ Id: job.id, Name: '/' + job.name, Image: profile.image,
           Config: { Labels: { 'scanmux.job': job.name.slice('scanmux-job-'.length) }, User: '1000:1000', Tty: false, OpenStdin: true, WorkingDir: '/work', Env: [],
-            Entrypoint: ['/usr/bin/python3'], Cmd: ['-I', '-B', '/app/internal/linux-job-supervisor.py', job.name.slice('scanmux-job-'.length), '10000', '65536'], Healthcheck: { Test: ['NONE'] } },
+            Entrypoint: ['/usr/bin/python3'], Cmd: ['-I', '-B', '/app/internal/linux-job-supervisor.py', job.name.slice('scanmux-job-'.length), '10000', String(profile.scan.maxOutputBytes)], Healthcheck: { Test: ['NONE'] } },
           HostConfig: { NetworkMode: 'none', ReadonlyRootfs: true, Privileged: false, AutoRemove: false, PidMode: '', IpcMode: 'private', CgroupnsMode: 'private', UTSMode: '', CapAdd: [], CapDrop: ['ALL'],
             SecurityOpt: ['no-new-privileges'], PortBindings: {}, LogConfig: { Type: 'none' }, Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev,size=8388608,mode=1777', '/work': 'rw,noexec,nosuid,nodev,size=16777216,mode=0700,uid=1000,gid=1000' },
             PidsLimit: 64, NanoCpus: 1000000000, Memory: 268435456, MemorySwap: 268435456, ShmSize: 1048576,
@@ -223,7 +224,7 @@ test('synthetic owner: same committed oracle, two fresh removed jobs, immutable 
   assert.equal(assessVerification(source, saved.testGuard, saved.attempts).runtimeEvidence, null, 'serialized attempts do not create live evidence');
   assert.equal(verificationPolicy(f.source, selection, saved.runtimeEvidence, false).gate, 'REVIEW', 'saved booleans cannot import runtime promotion');
   const receiptPath = path.join(directory, 'before', 'reproduction-job.json'), receipt = await readFile(receiptPath);
-  await writeFile(receiptPath, Buffer.concat([receipt, Buffer.from(' ')])); await assert.rejects(readVerification(directory, 65536));
+  await writeFile(receiptPath, Buffer.concat([receipt, Buffer.from(' ')])); await assert.rejects(readVerification(directory, f.profile.scan.maxOutputBytes));
   await rm(directory, { recursive: true, force: true });
 });
 
@@ -250,7 +251,7 @@ for (const [scenario, snapshot, reason, gate, code] of [
   ['mutated', true, 'integrity_error', 'ERROR', 4], ['cleanup', true, 'integrity_error', 'ERROR', 4],
   ['binding_changed', true, 'integrity_error', 'ERROR', 4], ['binding_missing', true, 'integrity_error', 'ERROR', 4],
 ] as const) test('reproduction CLI cannot pass an unverified PASS source: ' + scenario, { skip: process.platform === 'darwin' }, async t => {
-  const f = await fixture(t, scenario, 1048576, 'medium');
+  const f = await fixture(t, scenario, 16 * fixtureMaxOutputBytes, 'medium');
   assert.equal(f.source.gate, 'PASS'); assert.equal(f.source.exitCode, 0);
   const result = await f.cli(snapshot);
   assert.deepEqual(result.record.verification, { kind: 'not_verified', reason });
@@ -261,7 +262,7 @@ for (const [scenario, snapshot, reason, gate, code] of [
 
 for (const [scenario, snapshot, kind] of [['pair', false, 'same_test_no_longer_reproduces'], ['pair', true, 'reproduced'], ['base_negative', true, 'not_reproduced']] as const)
   test('reproduction CLI preserves a held PASS result: ' + kind, { skip: process.platform === 'darwin' }, async t => {
-    const f = await fixture(t, scenario, 1048576, 'medium'), result = await f.cli(snapshot);
+    const f = await fixture(t, scenario, 16 * fixtureMaxOutputBytes, 'medium'), result = await f.cli(snapshot);
     assert.equal(result.record.verification.kind, kind); assert.equal(result.record.assessment.gate, 'PASS'); assert.equal(result.code, 0);
     assert.deepEqual(await readFile(f.reportPath), f.sourceBytes);
   });
@@ -288,7 +289,7 @@ for (const mutation of ['added', 'removed', 'mode_changed', 'modified'] as const
     Object.assign(record.files.find((file: { path: string }) => file.path === name), jobReference(bytes));
   }
   await writeFile(result.files.json, encode(record));
-  await assert.rejects(readVerification(directory, 65536), { code: 'invalid_reproduction_record' });
+  await assert.rejects(readVerification(directory, f.profile.scan.maxOutputBytes), { code: 'invalid_reproduction_record' });
   assert.throws(() => validateReproductionPlan(plan, f.jobs[1].expected!, f.jobs[1].operation!), { code: 'invalid_reproduction_record' });
   assert.deepEqual(await readFile(f.reportPath), f.sourceBytes);
 });
@@ -314,7 +315,7 @@ test('reproduction mode records must exactly cover the planned test directory wi
 
 for (const snapshot of [false, true]) for (const mutation of ['finding', 'test_id', 'test_mode', 'observation_digest'] as const)
   test('saved observations reject metadata inconsistent with their binding digest: ' + (snapshot ? 'snapshot ' : 'pair ') + mutation, { skip: process.platform === 'darwin' }, async t => {
-  const f = await fixture(t, 'pair', 1048576, 'critical', true), result = await f.run(snapshot), directory = path.dirname(result.files.json);
+  const f = await fixture(t, 'pair', 16 * fixtureMaxOutputBytes, 'critical', true), result = await f.run(snapshot), directory = path.dirname(result.files.json);
   t.after(() => rm(directory, { recursive: true, force: true }));
   const record = JSON.parse(await readFile(result.files.json, 'utf8')), observations = [];
   const save = async (name: string, bytes: Buffer) => {
@@ -355,14 +356,14 @@ for (const snapshot of [false, true]) for (const mutation of ['finding', 'test_i
   properties['scanmux.attempts'] = attempts.map(attempt => ({ receipt: attempt.receipt, binding: attempt.binding, outcome: attempt.kind }));
   properties['scanmux.evidence'] = record.runtimeEvidence; await save('verification.sarif.json', encode(sarif));
   await writeFile(result.files.json, encode(record));
-  await assert.rejects(readVerification(directory, 65536), { code: mutation === 'test_mode' ? 'invalid_reproduction_record' : 'integrity_error' });
+  await assert.rejects(readVerification(directory, f.profile.scan.maxOutputBytes), { code: mutation === 'test_mode' ? 'invalid_reproduction_record' : 'integrity_error' });
   assert.deepEqual(await readFile(path.join(directory, 'source-report.json')), f.sourceBytes);
   assert.deepEqual(await readFile(f.reportPath), f.sourceBytes);
   if (mutation !== 'observation_digest') for (const [index, side] of sides.entries()) assert.deepEqual(await readFile(path.join(directory, side, 'observation.json')), observations[index]);
 });
 
 for (const scenario of ['base_negative', 'still', 'head_missing', 'head_changed', 'failed', 'changed', 'cleanup', 'mutated'] as const) test('synthetic owner rejects an unproven pair: ' + scenario, { skip: process.platform === 'darwin' }, async t => {
-  const f = await fixture(t, scenario), result = await f.run(), directory = path.dirname(result.files.json), saved = await readVerification(directory, 65536);
+  const f = await fixture(t, scenario), result = await f.run(), directory = path.dirname(result.files.json), saved = await readVerification(directory, f.profile.scan.maxOutputBytes);
   assert.equal(result.verification.kind, 'not_verified');
   assert.equal(result.assessment.gate, ['cleanup', 'mutated'].includes(scenario) ? 'ERROR' : ['still', 'head_missing', 'head_changed'].includes(scenario) ? 'FAIL' : 'INCOMPLETE');
   if (['still', 'head_missing', 'head_changed'].includes(scenario)) assert.equal(saved.runtimeEvidence?.state, 'runtime_reproduced'); else assert.equal(saved.runtimeEvidence, null);
@@ -372,7 +373,7 @@ for (const scenario of ['base_negative', 'still', 'head_missing', 'head_changed'
 });
 
 for (const scenario of ['missing', 'image'] as const) test('synthetic owner: unavailable environment never creates a container or invents a test manifest: ' + scenario, { skip: process.platform === 'darwin' }, async t => {
-  const f = await fixture(t, scenario, 2 * 65536), result = await f.run(true), directory = path.dirname(result.files.json), saved = await readVerification(directory, 65536);
+  const f = await fixture(t, scenario, 2 * fixtureMaxOutputBytes), result = await f.run(true), directory = path.dirname(result.files.json), saved = await readVerification(directory, f.profile.scan.maxOutputBytes);
   assert.equal(result.assessment.gate, 'INCOMPLETE'); assert.equal(result.assessment.exitCode, 3); assert.equal(saved.runtimeEvidence, null);
   assert.deepEqual(saved.testGuard, { kind: 'not_checked', reason: 'environment_missing' }); assert.equal(f.jobs.length, 0);
   assert.ok(!f.calls.some(args => args[0] === 'create')); assert.equal(saved.attempts?.kind, 'snapshot');

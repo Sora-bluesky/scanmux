@@ -207,8 +207,7 @@ test('manifest-lock explanation mismatches are counted and printed without chang
     assert.match(text, /Diff: .* explained=0 unexplained=0 undetermined=1/);
     assert.match(text, /node_modules\/example  version_changed  undetermined:manifest_lock_mismatch/);
     assert.equal(text.includes('Missing:'), false);
-    if (vulnerable) assert.deepEqual([report.upgrades[0]?.state, report.upgrades[0]?.reason],
-      recorded === '>=1' ? ['undetermined', 'manifest_lock_mismatch'] : ['allowed', null]);
+    if (vulnerable) assert.deepEqual([report.upgrades[0]?.state, report.upgrades[0]?.reason], ['undetermined', 'manifest_lock_mismatch']);
   }
 });
 
