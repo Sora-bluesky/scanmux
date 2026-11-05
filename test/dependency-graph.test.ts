@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dependencyInputPath, diffDependencies, type DependencyChange, type ProjectDiff } from '../src/dependency-graph.ts';
+import { assessUpgrades, dependencyInputPath, diffDependencies, type DependencyChange, type ProjectDiff } from '../src/dependency-graph.ts';
 
 const bytes = (value: unknown) => value instanceof Uint8Array ? value : new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
 const inputs = (files: Record<string, unknown>) => new Map(Object.entries(files).map(([file, value]) => [file, bytes(value)]));
@@ -54,7 +54,7 @@ function nextAppWithOptionalDependencies(side: 'base' | 'head') {
 }
 
 test('dependency inputs are recognized by basename only for safe repository paths', () => {
-  for (const file of ['package.json', 'web/package-lock.json', 'a/b/.npmrc', 'pyproject.toml', 'py/uv.lock', 'uv.toml']) assert.equal(dependencyInputPath(file), true, file);
+  for (const file of ['package.json', 'web/package-lock.json', 'a/b/.npmrc', 'pyproject.toml', 'py/servers/member/pyproject.toml', 'py/uv.lock', 'uv.toml']) assert.equal(dependencyInputPath(file), true, file);
   for (const file of ['README.md', 'package.json.bak', '../package.json', '/package.json', 'a\\package.json', 'a//uv.lock']) assert.equal(dependencyInputPath(file), false, file);
 });
 
@@ -193,14 +193,218 @@ test('uv diff: a direct constraint change explains the transitive version change
   assert.equal(JSON.stringify(project).includes('pypi.org'), false);
 });
 
-test('uv workspaces and post releases are reported as outside the subset rather than guessed', () => {
+test('uv root-only workspaces are accepted and post releases remain outside the subset', () => {
   const head = uvShaped('head');
   const workspace = only(uvShaped('base'), { ...head, 'py/pyproject.toml': head['py/pyproject.toml'] + '[tool.uv.workspace]\nmembers = ["libs/*"]\n' });
-  assert.equal(workspace.manifest.head, 'workspaces_outside_subset');
-  assert.deepEqual(explanation(byKey(workspace).get('anyio')), { state: 'undetermined', reason: 'manifest_undetermined' });
+  assert.equal(workspace.manifest.head, null);
+  assert.deepEqual(explanation(byKey(workspace).get('anyio')), { state: 'explained', via: ['httpx@0.28.1', 'anyio@4.4.0'] });
+  const sources = '[tool.uv.sources]\nhttpx = { index = "private-index-value" }\n';
+  const sourced = only({ ...uvShaped('base'), 'py/pyproject.toml': uvShaped('base')['py/pyproject.toml'] + sources },
+    { ...head, 'py/pyproject.toml': head['py/pyproject.toml'] + sources + '[tool.uv.workspace]\nmembers = []\n' });
+  assert.equal(explanation(byKey(sourced).get('anyio')).state, 'explained');
   const post = only({}, { ...head, 'py/uv.lock': head['py/uv.lock'] + '\n' + uvPackage('python-dateutil', '2.9.0.post0').join('\n') });
   assert.deepEqual(post.graph.head?.outside, [{ key: 'python-dateutil', field: 'version', dependency: null, reason: 'post_release_outside_subset' }]);
   assert.deepEqual(post.graph.head?.outsideByReason, [{ field: 'version', reason: 'post_release_outside_subset', count: 1 }]);
+});
+
+function uvWorkspace(version = '1.0', spec = '>=1', virtual = false): Record<string, string> {
+  return {
+    'py/pyproject.toml': (virtual ? '[dependency-groups]\ndev = ["example>=1"]\n' : '[project]\nname = "root-name"\ndependencies = []\n')
+      + '[tool.uv.workspace]\nmembers = ["servers/*"]\n',
+    'py/servers/member/pyproject.toml': `[project]\nname = "Member_Name"\ndependencies = ["root-name", "example${spec}"]\n[tool.uv.sources]\nroot-name = { workspace = true }\n`,
+    'py/uv.lock': ['version = 1', '[manifest]', 'members = ["root-name", "member-name"]', '',
+      '[[package]]', 'name = "root-name"', 'source = { ' + (virtual ? 'virtual' : 'editable') + ' = "." }',
+      ...(virtual ? ['[package.dev-dependencies]', 'dev = [{ name = "example" }]', '[package.metadata.requires-dev]', 'dev = [{ name = "example", specifier = ">=1" }]'] : []),
+      '', '[[package]]', 'name = "member-name"', 'source = { editable = "servers/member" }',
+      'dependencies = [{ name = "root-name" }, { name = "example" }]', '[package.metadata]',
+      `requires-dist = [{ name = "root-name", editable = "." }, { name = "example", specifier = "${spec}" }]`, '',
+      ...uvPackage('example', version),
+    ].join('\n'),
+  };
+}
+const workspaceAssessment = (files: Record<string, unknown>) => assessUpgrades(inputs(files), [{
+  lockfile: 'py/uv.lock', name: 'example', version: '1.1', advisories: ['GHSA-test'], fixedVersions: ['1.2'], fixEvents: 'complete',
+}]);
+
+test('uv editable path dependencies without workspace declarations retain single-project results', () => {
+  for (const source of ['editable', 'virtual']) for (const rootPackage of [true, false]) {
+    const files = {
+      'py/pyproject.toml': '[project]\nname = "app"\ndependencies = ["example>=1"]\n',
+      'py/uv.lock': ['version = 1',
+        ...(rootPackage ? ['[[package]]', 'name = "app"', 'source = { editable = "." }'] : []),
+        '[[package]]', 'name = "local"', `source = { ${source} = "libs/local" }`, 'dependencies = [{ name = "example" }]',
+        '[package.metadata]', 'requires-dist = [{ name = "example", specifier = ">=1" }]', '', ...uvPackage('example', '1.1'),
+      ].join('\n'),
+    };
+    const project = only(files, files), assessed = workspaceAssessment(files);
+    assert.deepEqual(project.status, { kind: 'complete' }); assert.deepEqual(project.manifest, { base: null, head: null });
+    assert.equal(project.graph.head?.instances, rootPackage ? 3 : 2); assert.equal(project.graph.head?.edges, 1);
+    assert.deepEqual([project.requirements, project.changes], [[], []]);
+    assert.deepEqual(assessed.projects, [{ lockfile: 'py/uv.lock', ecosystem: 'uv', status: 'complete', reason: null }]);
+    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason], ['allowed', null]);
+    const workspace = { ...files, 'py/pyproject.toml': files['py/pyproject.toml'] + '[tool.uv.workspace]\nmembers = []\n' };
+    assert.equal(workspaceAssessment(workspace).projects[0]?.reason, 'workspaces_outside_subset');
+  }
+});
+
+test('uv manifest dependency groups without workspace members retain the single-project graph and mismatch', () => {
+  for (const members of ['', 'members = []\n']) {
+    const files = {
+      'py/pyproject.toml': '[project]\nname = "app"\n[dependency-groups]\ndev = ["example>=1"]\n',
+      'py/uv.lock': ['version = 1', '[manifest]', members + '[manifest.dependency-groups]', 'dev = [{ name = "example", specifier = ">=1" }]',
+        '', ...uvPackage('example', '1.1')].join('\n'),
+    };
+    const project = only(files, files), assessed = workspaceAssessment(files);
+    assert.deepEqual(project.graph, { base: { instances: 1, edges: 0, unresolvedEdges: 0, outside: [], outsideCount: 0, outsideByReason: [] },
+      head: { instances: 1, edges: 0, unresolvedEdges: 0, outside: [], outsideCount: 0, outsideByReason: [] } });
+    assert.deepEqual(project.status, { kind: 'complete' }); assert.deepEqual(project.manifest, { base: null, head: null });
+    assert.deepEqual(assessed.projects, [{ lockfile: 'py/uv.lock', ecosystem: 'uv', status: 'complete', reason: null }]);
+    assert.deepEqual([assessed.upgrades[0]?.state, assessed.upgrades[0]?.reason], ['undetermined', 'manifest_lock_mismatch']);
+  }
+});
+
+test('uv workspace members share comparison and upgrade analysis with path-labelled requirements', () => {
+  const base = uvWorkspace(), head = uvWorkspace('1.1', '>=1.1'), project = only(base, head);
+  assert.deepEqual(project.status, { kind: 'complete' }); assert.deepEqual(project.manifest, { base: null, head: null });
+  assert.deepEqual(project.requirements.map(item => [item.section, item.name]), [['servers/member:project.dependencies', 'example']]);
+  assert.deepEqual(explanation(byKey(project).get('example')), { state: 'explained', via: ['example@1.1'] });
+  const assessed = workspaceAssessment(head);
+  assert.equal(assessed.projects[0]?.status, 'complete'); assert.equal(assessed.upgrades[0]?.state, 'allowed');
+  for (const [left, right] of [[{}, head], [head, {}], [uvShaped('base'), head]]) {
+    const diff = only(left!, right!); assert.deepEqual(diff.manifest, { base: null, head: null });
+  }
+});
+
+test('uv explanations can pass through a workspace package whose version changed', () => {
+  const side = (head: boolean) => {
+    const files = uvWorkspace(head ? '1.1' : '1.0'), version = head ? '0.2' : '0.1';
+    files['py/pyproject.toml'] = files['py/pyproject.toml']!.replace('dependencies = []', 'dependencies = ["example>=1"]');
+    files['py/servers/member/pyproject.toml'] = files['py/servers/member/pyproject.toml']!.replace('"root-name", "example>=1"', `"root-name>=${version}"`);
+    files['py/uv.lock'] = files['py/uv.lock']!.replace('source = { editable = "." }', `version = "${version}"\nsource = { editable = "." }\ndependencies = [{ name = "example" }]\n[package.metadata]\nrequires-dist = [{ name = "example", specifier = ">=1" }]`)
+      .replace('dependencies = [{ name = "root-name" }, { name = "example" }]', 'dependencies = [{ name = "root-name" }]')
+      .replace('requires-dist = [{ name = "root-name", editable = "." }, { name = "example", specifier = ">=1" }]', `requires-dist = [{ name = "root-name", specifier = ">=${version}", editable = "." }]`);
+    return files;
+  };
+  const project = only(side(false), side(true));
+  assert.equal(project.manifest.head, null);
+  assert.deepEqual(explanation(byKey(project).get('example')), { state: 'explained', via: ['root-name@0.2', 'example@1.1'] });
+  const unchangedRoot = side(true);
+  unchangedRoot['py/uv.lock'] = unchangedRoot['py/uv.lock']!.replace('version = "0.2"', 'version = "0.1"').replace('specifier = ">=0.2"', 'specifier = ">=0.0"');
+  unchangedRoot['py/servers/member/pyproject.toml'] = unchangedRoot['py/servers/member/pyproject.toml']!.replace('root-name>=0.2', 'root-name>=0.0');
+  assert.deepEqual(explanation(byKey(only(side(false), unchangedRoot)).get('example')), { state: 'unexplained', reason: 'reachable_only_via_unchanged' });
+});
+
+test('uv workspace completeness refuses each unsupported membership boundary', () => {
+  const original = uvWorkspace('1.1'), root = 'py/pyproject.toml', member = 'py/servers/member/pyproject.toml', lock = 'py/uv.lock';
+  const cases: Record<string, Record<string, string>> = {
+    missing: Object.fromEntries(Object.entries(original).filter(([file]) => file !== member)),
+    missingRoot: Object.fromEntries(Object.entries(original).filter(([file]) => file !== root)),
+    name: { ...original, [member]: original[member]!.replace('Member_Name', 'other') },
+    manifest: { ...original, [lock]: original[lock]!.replace('["root-name", "member-name"]', '["root-name"]') },
+    extraManifestMember: { ...original, [lock]: original[lock]!.replace('["root-name", "member-name"]', '["root-name", "member-name", "other"]') },
+    absentManifest: { ...original, [lock]: original[lock]!.replace('[manifest]\nmembers = ["root-name", "member-name"]\n', '') },
+    stale: { ...original, 'py/servers/stale/pyproject.toml': '[project]\nname = "stale"\n' },
+    nested: { ...original, [member]: original[member]! + '[tool.uv.workspace]\nmembers = []\n' },
+    excluded: { ...original, [root]: original[root]! + 'exclude = ["servers/member"]\n' },
+    duplicatePath: { ...original, [lock]: original[lock]!.replace('editable = "servers/member"', 'editable = "."') },
+    duplicateName: { ...original, [lock]: original[lock]!.replace('name = "member-name"\nsource', 'name = "root-name"\nversion = "0.1"\nsource') },
+    invalidMembers: { ...original, [root]: original[root]!.replace('["servers/*"]', '42') },
+    invalidExclude: { ...original, [root]: original[root]! + 'exclude = 42\n' },
+    invalidWorkspace: { ...original, [root]: original[root]!.replace('[tool.uv.workspace]\nmembers = ["servers/*"]', '[tool.uv]\nworkspace = false') },
+    invalidLockMembers: { ...original, [lock]: original[lock]!.replace('["root-name", "member-name"]', '42') },
+    duplicateLockMember: { ...original, [lock]: original[lock]!.replace('["root-name", "member-name"]', '["root-name", "root-name"]') },
+  };
+  for (const value of ['../member', '/member', 'C:/member', 'servers\\member', 'servers/../member', 'servers//member']) {
+    cases['path:' + value] = { ...original, [lock]: original[lock]!.replace('editable = "servers/member"', 'editable = ' + JSON.stringify(value)) };
+  }
+  for (const key of ['members', 'exclude']) for (const value of ['servers/**', 'servers/*/nested', 'servers/mem?er', '../servers', 'servers/[ab]']) {
+    cases[key + ':' + value] = { ...original, [root]: original[root]!.replace('members = ["servers/*"]', `${key} = [${JSON.stringify(value)}]`) };
+  }
+  for (const [label, files] of Object.entries(cases)) {
+    assert.equal(only({}, files).manifest.head, 'workspaces_outside_subset', label);
+    assert.equal(workspaceAssessment(files).projects[0]?.reason, 'workspaces_outside_subset', label);
+  }
+});
+
+test('uv workspace patterns select literals or immediate children and respect exclusions', () => {
+  const files = uvWorkspace('1.1');
+  files['py/pyproject.toml'] = files['py/pyproject.toml']!.replace('"servers/*"', '"servers/member"') + 'exclude = ["servers/excluded/*", "servers/stale"]\n';
+  files['py/servers/stale/pyproject.toml'] = '[project]\nname = "stale"\n';
+  files['py/servers/member/nested/pyproject.toml'] = '[project]\nname = "nested"\n';
+  assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
+  files['py/pyproject.toml'] = files['py/pyproject.toml']!.replace('"servers/member"', '"servers/*"');
+  assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
+});
+
+test('uv virtual workspace roots contribute groups and member failures keep their own reason', () => {
+  const files = uvWorkspace('1.1', '>=1', true);
+  assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
+  assert.equal(workspaceAssessment(files).upgrades[0]?.state, 'allowed');
+  const member = 'py/servers/member/pyproject.toml';
+  for (const [text, reason] of [['[project]\nname = "member-name"\ndynamic = ["dependencies"]\n', 'dynamic_dependencies_outside_subset'],
+    ['[project]\nname = "member-name"\ndependencies = 42\n', 'requirement_outside_subset'], ['invalid', 'toml_outside_subset']]) {
+    const broken = { ...files, [member]: text! };
+    assert.equal(only({}, broken).manifest.head, reason); assert.equal(workspaceAssessment(broken).projects[0]?.reason, reason);
+  }
+  assert.equal(only({}, { 'py/pyproject.toml': '[dependency-groups]\ndev = []\n', 'py/uv.lock': files['py/uv.lock']! }).manifest.head, 'manifest_invalid');
+});
+
+test('uv virtual roots without a lock package use the manifest dependency groups', () => {
+  const files = uvWorkspace('1.1', '>=1', true), lock = 'py/uv.lock', member = 'py/servers/member/pyproject.toml';
+  files[lock] = files[lock]!.replace('members = ["root-name", "member-name"]', 'members = ["member-name"]\n[manifest.dependency-groups]\ndev = [{ name = "example", specifier = ">=1" }]')
+    .replace(/\[\[package\]\]\nname = "root-name"[\s\S]*?(?=\[\[package\]\])/, '')
+    .replace('{ name = "root-name" }, ', '').replace('{ name = "root-name", editable = "." }, ', '');
+  files[member] = '[project]\nname = "member-name"\ndependencies = ["example>=1"]\n';
+  assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
+  assert.equal(workspaceAssessment(files).upgrades[0]?.state, 'allowed');
+  const project = only({}, files);
+  assert.deepEqual(project.graph.head, { instances: 2, edges: 2, unresolvedEdges: 0, outside: [], outsideCount: 0, outsideByReason: [] });
+  assert.deepEqual(only(files, files).graph, { base: project.graph.head, head: project.graph.head });
+  assert.deepEqual(project.changes.map(change => change.name), ['example']);
+  assert.deepEqual(only(files, {}).changes.map(change => change.name), ['example']);
+  const assessed = workspaceAssessment(files);
+  assert.deepEqual(assessed.upgrades.map(upgrade => upgrade.name), ['example']);
+  assert.deepEqual(assessed.upgrades.flatMap(upgrade => upgrade.instances.map(instance => instance.key)), ['example']);
+  files['py/pyproject.toml'] = files['py/pyproject.toml']!.replace('example>=1', 'example>=1.1');
+  assert.equal(workspaceAssessment(files).projects[0]?.status, 'complete');
+  assert.equal(workspaceAssessment(files).upgrades[0]?.reason, 'manifest_lock_mismatch');
+});
+
+test('uv workspace resolution settings come only from the root and sources cover every member', () => {
+  const base = uvWorkspace(), head = uvWorkspace('1.1', '>=1.1'), member = 'py/servers/member/pyproject.toml';
+  head[member] += '[tool.uv]\noverride-dependencies = ["example==1.1"]\nconstraint-dependencies = ["example<2"]\nexclude-newer = "2020-01-01"\n';
+  assert.equal(workspaceAssessment(head).upgrades[0]?.state, 'allowed');
+  assert.equal(explanation(byKey(only(base, head)).get('example')).state, 'explained');
+  const sources = { ...head, [member]: head[member]!.replace('root-name = { workspace = true }', 'root-name = { path = "private-source-value" }') };
+  assert.deepEqual(explanation(byKey(only(base, sources)).get('example')), { state: 'undetermined', reason: 'overrides_changed' });
+  assert.equal(JSON.stringify(only(base, sources)).includes('private-source-value'), false);
+  const overridden = { ...head, 'py/pyproject.toml': '[tool.uv]\noverride-dependencies = ["example==1.1"]\n' + head['py/pyproject.toml']! };
+  assert.equal(workspaceAssessment(overridden).upgrades[0]?.reason, 'overrides_declared');
+});
+
+test('uv member groups stay distinct even when two members declare the same package', () => {
+  const base = uvWorkspace('1.1'), member = 'py/servers/member/pyproject.toml';
+  base['py/pyproject.toml'] = base['py/pyproject.toml']!.replace('dependencies = []', 'dependencies = ["example>=1"]');
+  base['py/uv.lock'] = base['py/uv.lock']!.replace('source = { editable = "." }', 'source = { editable = "." }\ndependencies = [{ name = "example" }]\n[package.metadata]\nrequires-dist = [{ name = "example", specifier = ">=1" }]');
+  const head = { ...base, 'py/pyproject.toml': base['py/pyproject.toml']!.replace('example>=1', 'example>=1.1'),
+    [member]: base[member]!.replace('example>=1', 'example>=1.2') };
+  assert.deepEqual(only(base, head).requirements.map(item => item.section), ['project.dependencies', 'servers/member:project.dependencies']);
+  assert.equal(workspaceAssessment(head).upgrades[0]?.reason, 'manifest_lock_mismatch');
+});
+
+test('uv member-only changes affect the manifest digest, declarations and lock agreement', () => {
+  const base = uvWorkspace('1.1'), member = 'py/servers/member/pyproject.toml';
+  const head = { ...base, [member]: base[member]!.replace('example>=1', 'example>=1.1') }, diff = only(base, head);
+  assert.notEqual(diff.inputs.base.manifestSha256, diff.inputs.head.manifestSha256);
+  assert.deepEqual(diff.requirements.map(item => [item.section, item.name]), [['servers/member:project.dependencies', 'example']]);
+  assert.equal(workspaceAssessment(head).projects[0]?.status, 'complete');
+  assert.equal(workspaceAssessment(head).upgrades[0]?.reason, 'manifest_lock_mismatch');
+  const comment = only(base, { ...base, [member]: base[member]! + '# change\n' });
+  assert.notEqual(comment.inputs.base.manifestSha256, comment.inputs.head.manifestSha256);
+  const unsupported = { ...base, 'py/pyproject.toml': base['py/pyproject.toml']!.replace('servers/*', 'servers/**') };
+  const outside = only(unsupported, { ...unsupported, [member]: base[member]! + '# change\n' });
+  assert.equal(outside.manifest.head, 'workspaces_outside_subset');
+  assert.notEqual(outside.inputs.base.manifestSha256, outside.inputs.head.manifestSha256);
 });
 
 test('uv keys of a name with several versions use the validated version or a hash, never the raw version text', () => {

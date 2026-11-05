@@ -317,7 +317,11 @@ npm v2/v3とuv.lock v1のOSV指摘ごとに、`allowed`（宣言が新しい修�
 base/headでは変更されたlockfile項目を分類し、版の変更と追加を、変更された直接依存からの経路で説明するか未説明として列挙します。
 JSONは`scanmux.dependencies/v2`で、インストール済みパッケージから取得した`tool: { name: "scanmux", version }`を含みます。`advisories`はlockfileパス・ecosystem・パッケージ名・OSV IDごとに1件です。`status`は`removed`（baseだけ）、`added`（headだけ）、`unchanged`（両側。版が変わっても同じ）で、base未指定なら`present`です。`advisoryCounts`で4種類を集計し、テキストでは追加分を先に表示します。片側でも検査が失敗・未完了なら脆弱性情報を比較せず、観測が0件でも終了値2にします。
 
-各項目には`baseVersion`・`headVersion`（存在しなければnull。複数の版はソートして`, `で連結）、`id`・`aliases`・`severity`（レコードの`database_specific.severity`。なければnull。スコアは計算しない）、該当するaffected範囲の修正版`fixedVersions`（記録がなければ空配列）が入ります。`dev`はnpm lockfileの`dev`・`devOptional`から読み、headにパッケージがあればhead、なければbaseを使います。該当する全インスタンスが開発用の場合だけtrue、それ以外のecosystemではnullです。npm v2/v3のlockfileで宣言されたlink・workspaceパッケージはローカルと判定し、オフライン照合の欠けに数えません。ローカルと宣言されていない版なしパッケージは未完了のままです。workspaceの更新可否は`workspaces_outside_subset`で`undetermined`になり得ます。
+各項目には`baseVersion`・`headVersion`（存在しなければnull。複数の版はソートして`, `で連結）、`id`・`aliases`・`severity`（レコードの`database_specific.severity`。なければnull。スコアは計算しない）、該当するaffected範囲の修正版`fixedVersions`（記録がなければ空配列）が入ります。`dev`はnpm lockfileの`dev`・`devOptional`から読み、headにパッケージがあればhead、なければbaseを使います。該当する全インスタンスが開発用の場合だけtrue、それ以外のecosystemではnullです。npm v2/v3のlockfileで宣言されたlink・workspaceパッケージはローカルと判定し、オフライン照合の欠けに数えません。ローカルと宣言されていない版なしパッケージは未完了のままです。npm workspaceのプロジェクト解析は、引き続き`workspaces_outside_subset`で`undetermined`になります。
+
+uv workspaceの解析は、ルートに`[tool.uv.workspace]`宣言があるか、lockの`[manifest] members`が空でない場合だけ行います。それ以外はeditableなパス依存があっても単一プロジェクトとして解析します。workspaceでは、`uv.lock`の`editable`・`virtual`に記録されたメンバーのパスを、lockfileのディレクトリからの相対パスとして使います。各メンバーのcommit済み`pyproject.toml`が、その側の収集済み入力に含まれ、正規化したプロジェクト名がlock内のパッケージ名と一致する必要があります。`[manifest] members`の集合もこれらのパッケージと一致する必要があり、`[manifest]`の省略はルートのみを意味します。絶対パス・`..`・バックスラッシュを含むパスは扱いません。workspaceの`members`と`exclude`は、リテラルのパスか末尾に一つだけ`/*`を付けた形に限ります。その条件で選ばれる収集済みmanifestはすべてlock内に必要で、メンバー内のworkspace宣言も扱いません。所属条件を満たさなければ`workspaces_outside_subset`で`undetermined`のままです。メンバーのmanifest不正や動的依存は、それぞれの理由を保持します。ファイルシステムを追加探索せず、既存の入力容量制限と除外条件を適用します。
+
+`[project]`のない仮想workspaceルートは依存グループと解決設定だけを提供し、workspace宣言もなければ`manifest_invalid`です。メンバーの要求を統合して比較・更新判定し、ルート以外の節名には`servers/member:project.dependencies`のように相対パスを付けます。上書き・制約・日時制限はルートから、sourcesは全メンバーから取得します。`manifestSha256`はルートとメンバーのmanifestを含み、baseとheadはそれぞれの入力で判定します。プロジェクトの状態が`complete`でも、要求とlockの一致は保証しません。単一プロジェクトでもworkspaceでも、不一致のある更新候補は別途`manifest_lock_mismatch`になります。アドバイザリ照合は変わりません。
 
 リポジトリ外のresolver設定は読みません。
 

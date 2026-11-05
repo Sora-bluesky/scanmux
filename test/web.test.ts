@@ -179,12 +179,14 @@ test('HTML save failure publishes neither format and preserves pre-existing byte
 
 test('preparation cancellation waits for owned work and prevents plan adoption and scan', async () => {
   const gate = deferred();
+  const reached = deferred();
   const f = await fixture({ prepare: async (_url, _config, workspace) => {
     const cleanup = sourceCleanupFor(workspace), root = cleanup.register(workspace, path.join(workspace, 'repository'));
-    await mkdir(root); await cleanup.capture(workspace, root); await gate.promise; return plan(root);
+    await mkdir(root); await cleanup.capture(workspace, root); reached.resolve(); await gate.promise; return plan(root);
   } });
   try {
     await f.request('/api/prepare', { url: 'https://github.com/a/b' });
+    await reached.promise;
     const state = await f.state();
     await f.request('/api/cancel', { id: state.id });
     assert.equal((await f.state()).state, 'cancelling');

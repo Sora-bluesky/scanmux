@@ -64,16 +64,17 @@ async function fixture(options: Options = {}) {
     await fs.mkdir(directory, { recursive: true }); await fs.writeFile(path.join(directory, oid.slice(2)), deflateSync(content)); return oid;
   };
   const tree = async (entries: Record<string, string | Buffer>): Promise<string> => {
-    const groups = new Map<string, Record<string, string | Buffer>>(), result: Buffer[] = [];
+    const groups = new Map<string, Record<string, string | Buffer>>(), result: [string, Buffer][] = [];
     for (const name of Object.keys(entries).sort()) {
       const slash = name.indexOf('/');
       if (slash >= 0) {
         const directory = name.slice(0, slash), group = groups.get(directory) ?? {};
         group[name.slice(slash + 1)] = entries[name]!; groups.set(directory, group);
-      } else result.push(Buffer.concat([Buffer.from(`100644 ${name}\0`), Buffer.from(await object('blob', Buffer.from(entries[name]!)), 'hex')]));
+      } else result.push([name, Buffer.concat([Buffer.from(`100644 ${name}\0`), Buffer.from(await object('blob', Buffer.from(entries[name]!)), 'hex')])]);
     }
-    for (const [name, children] of groups) result.push(Buffer.concat([Buffer.from(`40000 ${name}\0`), Buffer.from(await tree(children), 'hex')]));
-    return object('tree', Buffer.concat(result));
+    for (const [name, children] of groups) result.push([name + '/', Buffer.concat([Buffer.from(`40000 ${name}\0`), Buffer.from(await tree(children), 'hex')])]);
+    result.sort(([left], [right]) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+    return object('tree', Buffer.concat(result.map(([, entry]) => entry)));
   };
   const revision = async (entries: Record<string, string | Buffer>, parent?: string) => object('commit', Buffer.from(
     `tree ${await tree(entries)}\n${parent ? `parent ${parent}\n` : ''}author Fixture <fixture@example.invalid> 1700000000 +0000\ncommitter Fixture <fixture@example.invalid> 1700000000 +0000\n\nfixture\n`));
@@ -112,6 +113,12 @@ async function fixture(options: Options = {}) {
         const file = args[++index]!.slice(1), snapshot = path.dirname(file);
         calls.push({ database: execution.database, config: await fs.readFile(args[args.indexOf('--config') + 1]!, 'utf8'), snapshot, toolVersion: tool.version });
         if (path.basename(path.dirname(snapshot)) === options.failureSide) return { reason: options.failureReason ?? 'exit', code: 2, stdout: Buffer.alloc(0) };
+        if (path.basename(file) === 'uv.lock') {
+          const content = await fs.readFile(file, 'utf8'), version = /name = "example"\nversion = "([^"]+)"/.exec(content)![1]!;
+          sources.push({ source: { path: file }, packages: [{ package: { name: 'example', ecosystem: 'PyPI', version },
+            vulnerabilities: options.advisories?.(version) ?? [] }] });
+          continue;
+        }
         const content = JSON.parse(await fs.readFile(file, 'utf8'));
         const version = content.packages['node_modules/example']?.version ?? '1.0.0';
         sources.push({ source: { path: file }, packages: [{ package: { name: 'example', ecosystem: 'npm', version },
@@ -152,6 +159,31 @@ test('compares removed, added and unchanged advisories across versions with v2 m
   const text = f.text(report); assert.match(text, /Advisories: added=1 removed=1 unchanged=1 present=0/);
   const reversed = f.text({ ...report, advisories: [...report.advisories].reverse() });
   assert.ok(reversed.indexOf('  added  ') < reversed.indexOf('  removed  '));
+});
+
+test('uv workspaces read committed nested manifests and report member-only changes without changing advisories', async () => {
+  const baseFiles = {
+    'pyproject.toml': '[project]\nname = "root-name"\n[tool.uv.workspace]\nmembers = ["servers/*"]\n',
+    'servers/member/pyproject.toml': '[project]\nname = "member-name"\ndependencies = ["root-name", "example>=1"]\n[tool.uv.sources]\nroot-name = { workspace = true }\n',
+    'uv.lock': ['version = 1', '[manifest]', 'members = ["root-name", "member-name"]', '[[package]]', 'name = "root-name"', 'source = { editable = "." }',
+      '[[package]]', 'name = "member-name"', 'source = { editable = "servers/member" }', 'dependencies = [{ name = "root-name" }, { name = "example" }]',
+      '[package.metadata]', 'requires-dist = [{ name = "root-name", editable = "." }, { name = "example", specifier = ">=1" }]',
+      '[[package]]', 'name = "example"', 'version = "1.1.0"', 'source = { registry = "https://pypi.org/simple" }', ''].join('\n'),
+  };
+  const member = 'servers/member/pyproject.toml', f = await fixture({ baseFiles, headFiles: { ...baseFiles, [member]: baseFiles[member].replace('example>=1', 'example>=1.1') },
+    advisories: () => [{ ...advisory('GHSA-uv'), affected: [{ package: { name: 'example', ecosystem: 'PyPI' },
+      ranges: [{ events: [{ introduced: '0' }, { fixed: '1.2.0' }] }] }] }],
+  });
+  await fs.mkdir(path.join(path.dirname(f.root), 'database', 'osv-scalibr', 'PyPI'), { recursive: true });
+  await fs.writeFile(path.join(path.dirname(f.root), 'database', 'osv-scalibr', 'PyPI', 'all.zip'), 'synthetic database');
+  const report = await f.analyze();
+  assert.equal(report.exitCode, 0, JSON.stringify(report.missing)); assert.equal(report.osv.state, 'completed'); assert.deepEqual(report.missing, []);
+  assert.deepEqual(report.projects, [{ lockfile: 'uv.lock', ecosystem: 'uv', status: 'complete', reason: null }]);
+  assert.deepEqual(report.advisoryCounts, { added: 0, removed: 0, unchanged: 1, present: 0 });
+  assert.equal(report.upgrades[0]?.reason, 'manifest_lock_mismatch');
+  const project = report.diff!.projects[0]!;
+  assert.notEqual(project.inputs.base.manifestSha256, project.inputs.head.manifestSha256);
+  assert.deepEqual(project.requirements.map(item => [item.section, item.name]), [['servers/member:project.dependencies', 'example']]);
 });
 
 test('removed or unchanged advisories give exit 0, even when upgrade analysis is undetermined', async () => {
