@@ -27,8 +27,12 @@ test('pins: closed schema, exact versions and the producer-only scenario', async
   assert.throws(() => targetOf('pull_request', {}, controller), /invalid_target/);
 });
 
-for (const [name, change, code, changeFiles] of [
+for (const [name, change, code, changeFiles, eventName = 'workflow_dispatch', payload = { inputs: { scenario: 'none' } }] of [
   ['documented outcome with findings', () => {}, 0],
+  ['skip-upload with complete local files', manifest => { manifest.scenario = 'skip-upload'; }, 3, undefined, 'workflow_dispatch', { inputs: { scenario: 'skip-upload' } }],
+  ['failure scenario despite normal manifest', () => {}, 3, undefined, 'workflow_dispatch', { inputs: { scenario: 'cancel-wait' } }],
+  ['dispatch without scenario', () => {}, 3, undefined, 'workflow_dispatch', {}],
+  ['workflow_run ignores scenario input', () => {}, 0, undefined, 'workflow_run', { inputs: { scenario: 'skip-upload' } }],
   ['ERROR', (_manifest, claim) => { claim.gate = 'ERROR'; claim.exitCode = 4; }, 4],
   ['FAIL', (_manifest, claim) => { claim.gate = 'FAIL'; claim.exitCode = 1; }, 1],
   ['PASS', (_manifest, claim) => { claim.gate = 'PASS'; claim.exitCode = 0; }, 1],
@@ -54,6 +58,8 @@ for (const [name, change, code, changeFiles] of [
   t.after(() => removeTempDir(temp));
   const directory = path.join(temp, 'scanmux', 'delivery');
   await mkdir(directory, { recursive: true });
+  const eventPath = path.join(temp, 'event.json');
+  await writeFile(eventPath, JSON.stringify(payload) + '\n');
   const claim = { schema: 'scanmux.ci-result/v1', gate: 'INCOMPLETE', exitCode: 3 };
   const report = { plan: { schema: 'scanmux.plan/v2' }, gate: 'INCOMPLETE', executionState: 'completed', integrityErrors: [], findings: [{ engine: 'osv', severity: 'high' }],
     engines: ['gitleaks', 'osv', 'codex-security', 'runtime-advisories'].map(engine => ({ engine, execution: engine === 'codex-security' ? 'not_started' : 'completed' })) };
@@ -73,7 +79,7 @@ for (const [name, change, code, changeFiles] of [
   }
   const result = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['scripts/ci-produce.mjs', 'gate'], { windowsHide: true,
-      env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, RUNNER_TEMP: temp, GITHUB_EVENT_NAME: 'workflow_dispatch' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, RUNNER_TEMP: temp, GITHUB_EVENT_NAME: eventName, GITHUB_EVENT_PATH: eventPath }, stdio: ['ignore', 'pipe', 'pipe'] });
     const out = [], err = [];
     child.stdout.on('data', chunk => out.push(chunk)); child.stderr.on('data', chunk => err.push(chunk)); child.on('error', reject);
     child.on('close', code => resolve({ code, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') }));
