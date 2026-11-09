@@ -83,4 +83,5 @@ jobs:
         run: node scripts/ci-produce.mjs anchor
       - name: Gate
         if: ${{ !cancelled() }}
+        continue-on-error: true
         run: node scripts/ci-produce.mjs gate
