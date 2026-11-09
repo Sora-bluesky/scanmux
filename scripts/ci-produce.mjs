@@ -9,7 +9,7 @@ import { parseRuntimePolicy } from '../src/runtime-policy.ts';
 import { SafeError } from '../src/safety.ts';
 import { readZip } from '../src/zip-archive.ts';
 import {
-  anchorLine, ciScenarios, deliveryFiles, failureCodes, manifestName, optionalFeatures, parseDeliveryManifest, producerJob, producerStages, testsWorkflowPath,
+  anchorLine, ciScenarios, deliveryFiles, failureCodes, manifestName, matchesOfflineOutcome, optionalFeatures, parseDeliveryManifest, producerJob, producerStages, testsWorkflowPath,
 } from '../src/github-ci.ts';
 
 const repository = path.resolve(import.meta.dirname, '..');
@@ -254,12 +254,15 @@ async function gate(dirs) {
   const manifest = parseDeliveryManifest(await readJson(path.join(dirs.delivery, manifestName)));
   if (manifest.outcome.kind === 'failed') {
     process.stdout.write(`ScanMux self-scan: producer failed at ${manifest.outcome.stage} (${manifest.outcome.code}); exit 4.\n`);
+    process.stdout.write('ScanMux self-scan documented offline outcome: did not match.\n');
     return 4;
   }
   const claim = await readJson(path.join(dirs.delivery, 'ci-result.json'));
   if (![0, 1, 2, 3, 4].includes(claim.exitCode)) return 4;
   process.stdout.write(`ScanMux self-scan claim: ${claim.gate} (exit ${claim.exitCode}).\n`);
-  return claim.exitCode;
+  const matched = matchesOfflineOutcome(manifest, claim, await readJson(path.join(dirs.delivery, 'report.json')));
+  process.stdout.write(`ScanMux self-scan documented offline outcome: ${matched ? 'matched' : 'did not match'}${claim.gate === 'PASS' ? ' (unexpected PASS)' : ''}.\n`);
+  return matched ? 0 : claim.exitCode || 1;
 }
 
 async function main(command) {

@@ -20,19 +20,21 @@ const workflowBytes = await readFile(producerWorkflowPath);
 const json = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n');
 
 type Files = Map<string, Buffer>;
-function produced(gate: 'PASS' | 'INCOMPLETE' = 'INCOMPLETE', commit = target): Files {
+function produced(gate: 'PASS' | 'INCOMPLETE' | 'FAIL' | 'ERROR' = 'INCOMPLETE', commit = target, change?: (report: Record<string, any>) => void): Files {
   const root = 'D:\\a\\_temp\\scanmux\\target';
   const plan = { schema: 'scanmux.plan/v2', root, repoId: hash(root), commit, policyHash: 'a'.repeat(64), planHash: 'b'.repeat(64), snapshotHash: 'd'.repeat(64) };
   const engines = [{ engine: 'gitleaks', execution: 'completed', coverage: 'analyzed' }, { engine: 'osv', execution: 'completed', coverage: 'analyzed' },
     { engine: 'codex-security', execution: gate === 'PASS' ? 'completed' : 'not_started', coverage: gate === 'PASS' ? 'analyzed' : 'unsupported' },
     { engine: 'runtime-advisories', execution: 'completed', coverage: 'analyzed' }];
-  const report = json({ schema: 'scanmux.report/v2', runId: '99999999-8888-4777-8666-555555555555', plan, gate, executionState: 'completed',
-    coverageState: gate === 'PASS' ? 'complete' : 'incomplete', engines });
+  const value = { schema: 'scanmux.report/v2', runId: '99999999-8888-4777-8666-555555555555', plan, gate, executionState: 'completed',
+    coverageState: gate === 'PASS' ? 'complete' : 'incomplete', engines, integrityErrors: [], findings: [{ engine: 'osv', severity: 'high' }] };
+  change?.(value);
+  const report = json(value);
   const expected = parseCiExpectation({ schema: 'scanmux.ci-expectation/v1', ciRun, jobs: [{ id: 'selfscan', targetRoot: root, repoId: plan.repoId, commit,
     policyHash: plan.policyHash, planHash: plan.planHash, snapshotHash: plan.snapshotHash }] });
   const receipt = parseCiReceipt({ schema: 'scanmux.ci-receipt/v1', ciRun, jobId: 'selfscan', reportRunId: '99999999-8888-4777-8666-555555555555', reportHash: hash(report),
     repoId: plan.repoId, commit, policyHash: plan.policyHash, planHash: plan.planHash, snapshotHash: plan.snapshotHash,
-    gate, executionState: 'completed', coverageState: gate === 'PASS' ? 'complete' : 'incomplete', engines });
+    gate, executionState: value.executionState, coverageState: value.coverageState, engines: value.engines });
   return new Map([['ci-receipt.json', json(receipt)], ['ci-result.json', json(evaluateCi(expected, [receipt]))], ['config.json', json({ schema: 2 })],
     ['expected.json', json(expected)], ['osv-database-receipt.json', json({ schema: 'scanmux.osv-database/v1' })], ['plan.json', json(plan)], ['report.json', report]]);
 }
@@ -55,7 +57,7 @@ function delivery(options: Options = {}): Files {
   return new Map([...files, [manifestName, json(manifest)]]);
 }
 const success = (name: string) => ({ name, status: 'completed', conclusion: 'success', number: 1 });
-function producerSteps(conclusions: Record<string, string | null> = {}, gate = 'failure') {
+function producerSteps(conclusions: Record<string, string | null> = {}, gate = 'success') {
   const names = [...controllerSteps, ...producerStages.map(item => item.step), ...deliverySteps, gateStep];
   return [success('Set up job'), ...names.map(name => ({ ...success(name), conclusion: Object.hasOwn(conclusions, name) ? conclusions[name] : name === gateStep ? gate : 'success' })), success('Complete job')];
 }
@@ -240,7 +242,7 @@ test('judgment row normal: agreement exits with the claimed gate and reports the
   assert.deepEqual(result.sourceChecks, { conclusion: 'passed', trusted: false });
   assert.ok(!Object.hasOwn(result, 'tests'));
   assert.ok(result.checks.every(item => item.state === 'passed'));
-  const pass = await judge({ delivery: delivery({ gate: 'PASS' }), steps: producerSteps({}, 'success') });
+  const pass = await judge({ delivery: delivery({ gate: 'PASS' }), steps: producerSteps({}, 'failure') });
   assert.deepEqual([pass.gate, pass.exitCode], ['PASS', 0]);
   const dispatched = await judge({ event: 'workflow_dispatch' });
   assert.deepEqual([dispatched.outcome, dispatched.sourceChecks.conclusion, dispatched.exitCode], ['agreed', 'not_applicable', 3]);
@@ -404,11 +406,27 @@ test('judgment row scenario: a run that stops early still reports an anchored or
   assert.deepEqual([normal.scenario, normal.notes], ['none', []]);
 });
 
-test('judgment row claim disagrees with the result: re-evaluation or the gate step must match the claim', async () => {
+test('judgment row claim disagrees with the result: re-evaluation matches the claim and Gate matches the offline outcome', async () => {
   const files = produced();
   const claim = JSON.parse(files.get('ci-result.json')!.toString('utf8')); claim.gate = 'PASS'; claim.exitCode = 0;
   expectReason(await judge({ delivery: delivery({ files: new Map([...files, ['ci-result.json', json(claim)]]) }) }), 'result_disagrees', 4, 'agreement');
-  expectReason(await judge({ steps: producerSteps({}, 'success') }), 'gate_step_disagrees', 4, 'agreement');
+  expectReason(await judge({ steps: producerSteps({}, 'failure') }), 'gate_step_disagrees', 4, 'agreement');
+});
+
+for (const gate of ['ERROR', 'FAIL', 'PASS'] as const) test(`offline outcome: ${gate} requires a failed Gate step`, async () => {
+  const files = delivery({ files: produced(gate) });
+  assert.equal((await judge({ delivery: files, steps: producerSteps({}, 'failure') })).outcome, 'agreed');
+  expectReason(await judge({ delivery: files, steps: producerSteps({}, 'success') }), 'gate_step_disagrees', 4, 'agreement');
+});
+
+for (const [name, change] of [
+  ['integrity error', (report: Record<string, any>) => { report.integrityErrors = ['report_hash_mismatch']; }],
+  ['second engine not started', (report: Record<string, any>) => { report.engines[0].execution = 'not_started'; }],
+  ['report not completed', (report: Record<string, any>) => { report.executionState = 'cancelled'; }],
+] as const) test(`offline outcome: ${name} requires a failed Gate step`, async () => {
+  const files = delivery({ files: produced('INCOMPLETE', target, change) });
+  assert.equal((await judge({ delivery: files, steps: producerSteps({}, 'failure') })).outcome, 'agreed');
+  expectReason(await judge({ delivery: files, steps: producerSteps({}, 'success') }), 'gate_step_disagrees', 4, 'agreement');
 });
 
 test('judgment row workflow content: an unapproved producer file or a head off the default branch is ERROR', async () => {
@@ -428,7 +446,7 @@ test('local copy: still requires every API check and is always marked', async ()
 
 test('local copy: a PASS claim is held at INCOMPLETE and kept as the claim', async () => {
   const files = delivery({ gate: 'PASS' });
-  const result = await judge({ delivery: files, steps: producerSteps({}, 'success') }, files);
+  const result = await judge({ delivery: files, steps: producerSteps({}, 'failure') }, files);
   assert.deepEqual(result.claimed, { gate: 'PASS', exitCode: 0 });
   assert.deepEqual([result.outcome, result.gate, result.exitCode, result.notes], ['agreed', 'INCOMPLETE', 3, ['local_copy_supplied']]);
 });
@@ -439,7 +457,7 @@ test('ci-github CLI: requires its flags, a config and a runtime policy v2 gh pin
   const config = path.join(directory, 'config.json');
   await writeFile(config, JSON.stringify(withTestProcessOwner({ schema: 1 })));
   const cli = (args: string[]) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, ['bin/scanmux.mjs', ...args], { windowsHide: true, env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['bin/scanmux.mjs', ...args], { windowsHide: true, env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, TEMP: directory, TMP: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [], err: Buffer[] = [];
     child.stdout.on('data', chunk => out.push(chunk)); child.stderr.on('data', chunk => err.push(chunk));
     child.on('error', reject);
@@ -494,7 +512,7 @@ test('round trip: the producer seal, anchor and gate commands feed the verifier'
   const done = Object.fromEntries(producerStages.map(item => [`${item.stage}.done`, '']));
   const source = { workflow_run: { id: sourceRunId, run_attempt: 1, event: 'pull_request', head_sha: target, path: testsWorkflowPath, pull_requests: [{ number: 7 }] } };
   const producedRun = await runProducer('workflow_run', source, { ...done, 'run.json': JSON.stringify({ ciRun }), 'config.json': JSON.stringify({ tools: { git } }) }, produced());
-  assert.equal(producedRun.gate, 3, 'gate exits with the INCOMPLETE claim');
+  assert.equal(producedRun.gate, 0, 'Gate succeeds for the documented INCOMPLETE outcome');
   const manifest = parseDeliveryManifest(JSON.parse(producedRun.files.get(manifestName)!.toString('utf8')));
   assert.deepEqual([manifest.github.workflowPath, manifest.outcome, manifest.git, manifest.source?.pr], [producerWorkflowPath, { kind: 'produced' }, git, 7]);
   const agreed = await judge({ head, delivery: producedRun.files, log: producedRun.log });
@@ -507,7 +525,7 @@ test('round trip: the producer seal, anchor and gate commands feed the verifier'
   assert.deepEqual([sealed.outcome, sealed.git, sealed.ciRun, sealed.files, sealed.scenario], [failure, null, null, [], 'tool-fetch-fail']);
   const later = Object.fromEntries(producerStages.slice(2).map(item => [item.step, 'skipped']));
   const failed = await judge({ event: 'workflow_dispatch', head, delivery: failedRun.files, log: failedRun.log, run: { display_title: 'offline-selfscan scenario=tool-fetch-fail' },
-    steps: producerSteps({ 'Acquire tools': 'failure', ...later }) });
+    steps: producerSteps({ 'Acquire tools': 'failure', ...later }, 'failure') });
   expectReason(failed, 'producer_failed', 4, 'manifest');
   assert.deepEqual([failed.producer, failed.scenario, failed.notes], [failure, 'tool-fetch-fail', ['failure_scenario']]);
 });

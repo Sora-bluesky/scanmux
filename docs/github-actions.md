@@ -6,7 +6,7 @@ Use this guide when checking a completed self-scan: it explains the workflows, d
 
 ScanMux runs its own tests and an offline self-scan on GitHub Actions. A maintainer then checks a finished self-scan run from a local machine with `scanmux ci-github`. This page describes the two workflows, what they deliver, and what the local check accepts.
 
-A normal self-scan run is red. `codex-security` is a required engine and stays `not_started` in an offline run, so the claimed gate is `INCOMPLETE` (exit 3). A successful verification means that the claim, the delivered files, and a local re-evaluation agree. It never means PASS unless the claim is PASS.
+A normal self-scan run is green only when the delivered files match the documented offline outcome: the manifest outcome is not `failed`, `ci-result.json` claims `INCOMPLETE` (exit 3), and `report.json` has `executionState: completed`, empty `integrityErrors`, and every engine `completed` except `codex-security`, which is `not_started`. Findings are allowed because the target includes advisory fixtures. A green run is not PASS: the claimed gate is still `INCOMPLETE`. A successful local verification means that the claim, the delivered files, a local re-evaluation, and the `Gate` step conclusion agree.
 
 ## Choose a workflow
 
@@ -75,7 +75,7 @@ After the upload succeeds, the `Anchor delivery` step prints one line to the job
 scanmux-anchor v1 manifest=<sha256> artifact=<id> run=<id> attempt=<n>
 ```
 
-The last step, `Gate`, exits with the claimed exit code, or 4 when the producer failed.
+The last step, `Gate`, exits 0 only for the documented offline outcome. Otherwise it exits with the claimed exit code, or 4 when the producer failed. An unexpected `PASS` is noted on stdout and exits 1 so it fails the step. The existing claim or producer failure line stays, followed by one line saying whether the delivered files matched the documented offline outcome. The claim, receipt, and their gate and exit codes stay unchanged.
 
 The self-scan does not upload code scanning results or attest its delivery artifact. The manifest records these as `not_uploaded` and `not_attested`, and neither counts as success. On a private repository, these features would require GitHub Code Security and GitHub Enterprise Cloud, respectively. The separate `Release` workflow attests release packages.
 
@@ -100,7 +100,7 @@ The checks run in this order. The first failure stops the run, and every later c
 6. `manifest`: a closed parse, run fields equal to the API, the pins sha256 approved in `src/github-ci.ts`, and the exact file set with matching sizes and sha256 values.
 7. `source_run`: for `workflow_run`, the `checks` run named by the anchored manifest has the same attempt, event, and head SHA as the target.
 8. `content_binding`: the expectation equals the one derived from `plan.json`, the receipt names the report hash, and the report matches the receipt.
-9. `agreement`: a local `evaluateCi` over the expectation and the receipt equals `ci-result.json`, and the `Gate` step conclusion matches the claim.
+9. `agreement`: a local `evaluateCi` over the expectation and the receipt equals `ci-result.json`, and the `Gate` step conclusion is `success` exactly when the delivered files match the documented offline outcome. A conclusion that disagrees with this rule stops with `gate_step_disagrees` (exit 4).
 
 The result reports `scenario` from the manifest named by the log anchor, or from the run name when the run stops before a manifest exists.
 Both are read only when the run identity and the workflow content check out, so a cancelled `cancel-wait` run still shows its scenario.
@@ -142,7 +142,7 @@ To show tampering, verify a copy with `--from-dir` after you change it. A change
 ## Limitations
 
 - The pull request that adds or changes `offline-selfscan.yml` cannot run it through `workflow_run`, because `workflow_run` uses the default-branch file. The first real verification happens after merge.
-- The self-scan is not a required status check, because it stays red while `codex-security` is not run.
+- The self-scan is not a required status check. Its green result confirms the documented offline outcome while `codex-security` remains unrun; it does not certify PASS.
 - The anchor and the API state prove which run produced the files. They are not a signature. Anyone with write access to the repository workflows can change what a later run does, which the approved workflow and pins sha256 values detect for those two files only.
 - Windows runners bill at twice the Linux rate.
 

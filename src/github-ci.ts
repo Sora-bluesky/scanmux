@@ -79,6 +79,16 @@ export interface DeliveryManifest {
   readonly files: readonly DeliveryFile[];
 }
 
+export function matchesOfflineOutcome(manifest: DeliveryManifest, claim: unknown, report: unknown): boolean {
+  const result = record(claim), value = record(report);
+  return manifest.outcome.kind !== 'failed' && result.gate === 'INCOMPLETE' && result.exitCode === 3
+    && value.executionState === 'completed' && Array.isArray(value.integrityErrors) && value.integrityErrors.length === 0
+    && Array.isArray(value.engines) && value.engines.every(item => {
+      const run = record(item);
+      return run.execution === (run.engine === 'codex-security' ? 'not_started' : 'completed');
+    });
+}
+
 export function parseDeliveryManifest(input: unknown): DeliveryManifest {
   const bad = 'manifest_invalid';
   const value = exactKeys(input, ['schema', 'github', 'source', 'targetHeadSha', 'controllerSha', 'pinsSha256', 'ciRun', 'scenario', 'git', 'outcome', 'optional', 'files'], bad);
@@ -257,7 +267,7 @@ function planIdentity(input: unknown) {
 function reportClaims(input: unknown) {
   const value = record(input);
   if (!Array.isArray(value.engines)) throw new SafeError('invalid');
-  return { runId: value.runId, gate: value.gate, executionState: value.executionState, coverageState: value.coverageState, plan: planIdentity(value.plan),
+  return { runId: value.runId, gate: value.gate, executionState: value.executionState, coverageState: value.coverageState, integrityErrors: value.integrityErrors, plan: planIdentity(value.plan),
     engines: value.engines.map(run => { const item = record(run); return { engine: item.engine, execution: item.execution, coverage: item.coverage }; }) };
 }
 function sourceConclusion(evidence: Evidence, event: string | undefined, sourceMatched: boolean): SourceConclusion {
@@ -366,7 +376,7 @@ export function judgeGithubRun(evidence: Evidence): Verification {
 
     const result = guarded('result_disagrees', () => evaluateCi(expected, [receipt]));
     if (digest(result) !== digest(json(files.get('ci-result.json'), 'result_disagrees'))) stop('result_disagrees');
-    if ((exitCodes[result.gate] === 0) !== (gateConclusion === 'success')) stop('gate_step_disagrees');
+    if (matchesOfflineOutcome(sealed, result, report) !== (gateConclusion === 'success')) stop('gate_step_disagrees');
     claimed = { gate: result.gate, exitCode: exitCodes[result.gate] };
     pass();
     return finish(evidence, states, null, claimed, sourceConclusion(evidence, event, true));
