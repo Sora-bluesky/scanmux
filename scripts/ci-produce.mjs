@@ -9,7 +9,7 @@ import { parseRuntimePolicy } from '../src/runtime-policy.ts';
 import { SafeError } from '../src/safety.ts';
 import { readZip } from '../src/zip-archive.ts';
 import {
-  anchorLine, ciScenarios, deliveryFiles, failureCodes, manifestName, optionalFeatures, parseDeliveryManifest, producerJob, producerStages, testsWorkflowPath,
+  anchorLine, ciScenarios, deliveryFiles, failureCodes, manifestName, matchesOfflineOutcome, optionalFeatures, parseDeliveryManifest, producerJob, producerStages, testsWorkflowPath,
 } from '../src/github-ci.ts';
 
 const repository = path.resolve(import.meta.dirname, '..');
@@ -250,16 +250,25 @@ async function anchor(dirs) {
   process.stdout.write(anchorLine(sha256(bytes), Number(id), Number(process.env.GITHUB_RUN_ID), Number(process.env.GITHUB_RUN_ATTEMPT)) + '\n');
 }
 
-async function gate(dirs) {
+async function gate(dirs, context) {
   const manifest = parseDeliveryManifest(await readJson(path.join(dirs.delivery, manifestName)));
   if (manifest.outcome.kind === 'failed') {
     process.stdout.write(`ScanMux self-scan: producer failed at ${manifest.outcome.stage} (${manifest.outcome.code}); exit 4.\n`);
+    process.stdout.write('ScanMux self-scan documented offline outcome: did not match.\n');
     return 4;
   }
   const claim = await readJson(path.join(dirs.delivery, 'ci-result.json'));
   if (![0, 1, 2, 3, 4].includes(claim.exitCode)) return 4;
   process.stdout.write(`ScanMux self-scan claim: ${claim.gate} (exit ${claim.exitCode}).\n`);
-  return claim.exitCode;
+  const files = await Promise.all(manifest.files.map(async file => {
+    const bytes = await readFile(path.join(dirs.delivery, file.path)).catch(() => null);
+    return bytes !== null && bytes.length === file.bytes && sha256(bytes) === file.sha256;
+  }));
+  const normalRun = Boolean(process.env.GITHUB_EVENT_PATH) && (context.eventName === 'workflow_run'
+    || (context.eventName === 'workflow_dispatch' && context.event?.inputs?.scenario === 'none'));
+  const matched = normalRun && files.every(Boolean) && matchesOfflineOutcome(manifest, claim, await readJson(path.join(dirs.delivery, 'report.json')).catch(() => null));
+  process.stdout.write(`ScanMux self-scan documented offline outcome: ${matched ? 'matched' : 'did not match'}${claim.gate === 'PASS' ? ' (unexpected PASS)' : ''}.\n`);
+  return matched ? 0 : claim.exitCode || 1;
 }
 
 async function main(command) {
@@ -270,7 +279,7 @@ async function main(command) {
   const context = { eventName, event: payload, scenario: scenarioOf(eventName, payload), pins: parsePins(await readJson(pinsPath)) };
   if (command === 'seal') { await seal(dirs, context); return 0; }
   if (command === 'anchor') { await anchor(dirs); return 0; }
-  if (command === 'gate') return gate(dirs);
+  if (command === 'gate') return gate(dirs, context);
   if (!Object.hasOwn(stages, command)) throw new SafeError('invalid_command');
   try {
     for (const required of prerequisites[command]) if (!(await exists(path.join(dirs.state, `${required}.done`)))) throw new StageFailure('stage_not_completed');
