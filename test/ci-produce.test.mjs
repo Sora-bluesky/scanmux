@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { removeTempDir } from './temp-cleanup.mjs';
 import { parsePins, scenarioOf, targetOf } from '../scripts/ci-produce.mjs';
-import { optionalFeatures, producerWorkflowPath, testsWorkflowPath } from '../src/github-ci.ts';
+import { deliveryFiles, optionalFeatures, producerWorkflowPath, testsWorkflowPath } from '../src/github-ci.ts';
 
 const controller = 'c'.repeat(40), target = 'e'.repeat(40);
 
@@ -27,7 +27,7 @@ test('pins: closed schema, exact versions and the producer-only scenario', async
   assert.throws(() => targetOf('pull_request', {}, controller), /invalid_target/);
 });
 
-for (const [name, change, code] of [
+for (const [name, change, code, changeFiles] of [
   ['documented outcome with findings', () => {}, 0],
   ['ERROR', (_manifest, claim) => { claim.gate = 'ERROR'; claim.exitCode = 4; }, 4],
   ['FAIL', (_manifest, claim) => { claim.gate = 'FAIL'; claim.exitCode = 1; }, 1],
@@ -37,6 +37,17 @@ for (const [name, change, code] of [
   ['second engine not started', (_manifest, _claim, report) => { report.engines[0].execution = 'not_started'; }, 3],
   ['codex-security completed', (_manifest, _claim, report) => { report.engines[2].execution = 'completed'; }, 3],
   ['report not completed', (_manifest, _claim, report) => { report.executionState = 'cancelled'; }, 3],
+  ['empty engines', (_manifest, _claim, report) => { report.engines = []; }, 3],
+  ['missing codex-security', (_manifest, _claim, report) => { report.engines.splice(2, 1); }, 3],
+  ['duplicate engine', (_manifest, _claim, report) => { report.engines.push({ ...report.engines[0] }); }, 3],
+  ['unknown engine', (_manifest, _claim, report) => { report.engines[0].engine = 'unknown'; }, 3],
+  ['v3 engines', (_manifest, _claim, report) => { report.plan.schema = 'scanmux.plan/v3'; report.engines.push({ engine: 'trivy', execution: 'completed' }); }, 0],
+  ['v3 missing trivy', (_manifest, _claim, report) => { report.plan.schema = 'scanmux.plan/v3'; }, 3],
+  ['unknown plan', (_manifest, _claim, report) => { report.plan.schema = 'scanmux.plan/v999'; }, 3],
+  ['report gate differs', (_manifest, _claim, report) => { report.gate = 'PASS'; }, 3],
+  ...deliveryFiles.filter(name => name !== 'ci-result.json').map(name => [`missing ${name}`, () => {}, 3, files => { files.delete(name); }]),
+  ['unreadable report', () => {}, 3, files => { files.set('report.json', null); }],
+  ['invalid report JSON', () => {}, 3, files => { files.set('report.json', '{'); }],
   ['failed manifest', manifest => { manifest.outcome = { kind: 'failed', stage: 'check', code: 'ci_check_failed' }; }, 4],
 ]) test(`Gate: ${name}`, async t => {
   const temp = await mkdtemp(path.join(tmpdir(), 'scanmux-producer-gate-'));
@@ -44,17 +55,22 @@ for (const [name, change, code] of [
   const directory = path.join(temp, 'scanmux', 'delivery');
   await mkdir(directory, { recursive: true });
   const claim = { schema: 'scanmux.ci-result/v1', gate: 'INCOMPLETE', exitCode: 3 };
-  const report = { executionState: 'completed', integrityErrors: [], findings: [{ engine: 'osv', severity: 'high' }],
+  const report = { plan: { schema: 'scanmux.plan/v2' }, gate: 'INCOMPLETE', executionState: 'completed', integrityErrors: [], findings: [{ engine: 'osv', severity: 'high' }],
     engines: ['gitleaks', 'osv', 'codex-security', 'runtime-advisories'].map(engine => ({ engine, execution: engine === 'codex-security' ? 'not_started' : 'completed' })) };
   const manifest = { schema: 'scanmux.github-delivery/v1',
     github: { repositoryId: 42, repository: 'example/scanmux', workflowPath: producerWorkflowPath, runId: 1001, attempt: 1, event: 'workflow_dispatch', runHeadSha: controller },
     source: null, targetHeadSha: controller, controllerSha: controller, pinsSha256: 'a'.repeat(64), ciRun: '11111111-2222-4333-8444-555555555555', scenario: 'none',
     git: { path: 'C:\\Program Files\\Git\\cmd\\git.exe', sha256: '1'.repeat(64), version: '2.51.0' }, outcome: { kind: 'produced' }, optional: optionalFeatures, files: [] };
   change(manifest, claim, report);
-  const files = new Map([['ci-result.json', JSON.stringify(claim) + '\n'], ['report.json', JSON.stringify(report) + '\n']]);
-  manifest.files = [...files].map(([name, text]) => ({ path: name, bytes: Buffer.byteLength(text), sha256: createHash('sha256').update(text).digest('hex') }));
+  const files = new Map(deliveryFiles.map(name => [name, '{}\n']));
+  files.set('ci-result.json', JSON.stringify(claim) + '\n'); files.set('report.json', JSON.stringify(report) + '\n');
+  changeFiles?.(files);
+  manifest.files = [...files].map(([name, text]) => ({ path: name, bytes: Buffer.byteLength(text ?? ''), sha256: createHash('sha256').update(text ?? '').digest('hex') }));
   files.set('manifest.json', JSON.stringify(manifest) + '\n');
-  for (const [name, text] of files) await writeFile(path.join(directory, name), text);
+  for (const [name, text] of files) {
+    if (text === null) await mkdir(path.join(directory, name));
+    else await writeFile(path.join(directory, name), text);
+  }
   const result = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['scripts/ci-produce.mjs', 'gate'], { windowsHide: true,
       env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, RUNNER_TEMP: temp, GITHUB_EVENT_NAME: 'workflow_dispatch' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -68,5 +84,5 @@ for (const [name, change, code] of [
   else assert.ok(result.stdout.includes(`ScanMux self-scan claim: ${claim.gate} (exit ${claim.exitCode}).\n`));
   if (claim.gate === 'PASS') assert.match(result.stdout, /unexpected PASS/);
   assert.equal(result.stdout.trim().split('\n').length, 2);
-  for (const [name, text] of files) assert.equal(await readFile(path.join(directory, name), 'utf8'), text, `${name} stays unchanged`);
+  for (const [name, text] of files) if (text !== null) assert.equal(await readFile(path.join(directory, name), 'utf8'), text, `${name} stays unchanged`);
 });

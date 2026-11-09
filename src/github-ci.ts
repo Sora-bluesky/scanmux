@@ -3,6 +3,7 @@ import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises';
 import type { Config, Gate, Tool } from './model.ts';
 import { evaluateCi, parseCiExpectation, parseCiReceipt } from './ci.ts';
 import { exitCodes } from './policy.ts';
+import { requiredEngines } from './engine-catalog.ts';
 import { execute, verifyVersion } from './process.ts';
 import { checkedJson } from './output.ts';
 import { privateWorkspace } from './private-storage.ts';
@@ -80,13 +81,16 @@ export interface DeliveryManifest {
 }
 
 export function matchesOfflineOutcome(manifest: DeliveryManifest, claim: unknown, report: unknown): boolean {
-  const result = record(claim), value = record(report);
-  return manifest.outcome.kind !== 'failed' && result.gate === 'INCOMPLETE' && result.exitCode === 3
-    && value.executionState === 'completed' && Array.isArray(value.integrityErrors) && value.integrityErrors.length === 0
-    && Array.isArray(value.engines) && value.engines.every(item => {
-      const run = record(item);
-      return run.execution === (run.engine === 'codex-security' ? 'not_started' : 'completed');
-    });
+  try {
+    const result = record(claim), value = record(report), required = requiredEngines(record(value.plan).schema);
+    const runs = Array.isArray(value.engines) ? value.engines.map(record) : [];
+    return manifest.outcome.kind !== 'failed' && manifest.files.length === deliveryFiles.length
+      && deliveryFiles.every(name => manifest.files.some(file => file.path === name))
+      && result.gate === 'INCOMPLETE' && result.exitCode === 3 && value.gate === 'INCOMPLETE'
+      && value.executionState === 'completed' && Array.isArray(value.integrityErrors) && value.integrityErrors.length === 0
+      && runs.length === required.length && required.every(engine => runs.filter(run => run.engine === engine).length === 1)
+      && runs.every(run => run.execution === (run.engine === 'codex-security' ? 'not_started' : 'completed'));
+  } catch { return false; }
 }
 
 export function parseDeliveryManifest(input: unknown): DeliveryManifest {
@@ -267,7 +271,8 @@ function planIdentity(input: unknown) {
 function reportClaims(input: unknown) {
   const value = record(input);
   if (!Array.isArray(value.engines)) throw new SafeError('invalid');
-  return { runId: value.runId, gate: value.gate, executionState: value.executionState, coverageState: value.coverageState, integrityErrors: value.integrityErrors, plan: planIdentity(value.plan),
+  return { runId: value.runId, gate: value.gate, executionState: value.executionState, coverageState: value.coverageState, integrityErrors: value.integrityErrors,
+    plan: { ...planIdentity(value.plan), schema: record(value.plan).schema },
     engines: value.engines.map(run => { const item = record(run); return { engine: item.engine, execution: item.execution, coverage: item.coverage }; }) };
 }
 function sourceConclusion(evidence: Evidence, event: string | undefined, sourceMatched: boolean): SourceConclusion {

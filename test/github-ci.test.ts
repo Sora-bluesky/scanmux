@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   anchorLine, approvedPinsSha256, producerWorkflowSha256, artifactName, collectEvidence, controllerSteps, deliverySteps, gateStep, judgeGithubRun, manifestName,
-  optionalFeatures, parseDeliveryManifest, producerStages, producerWorkflowPath, testsWorkflowPath, type GithubApi,
+  deliveryFiles, matchesOfflineOutcome, optionalFeatures, parseDeliveryManifest, producerStages, producerWorkflowPath, testsWorkflowPath, type GithubApi,
 } from '../src/github-ci.ts';
 import { evaluateCi, parseCiExpectation, parseCiReceipt } from '../src/ci.ts';
 import { localHeader, zip } from './zip-fixture.ts';
@@ -427,6 +427,61 @@ for (const [name, change] of [
   const files = delivery({ files: produced('INCOMPLETE', target, change) });
   assert.equal((await judge({ delivery: files, steps: producerSteps({}, 'failure') })).outcome, 'agreed');
   expectReason(await judge({ delivery: files, steps: producerSteps({}, 'success') }), 'gate_step_disagrees', 4, 'agreement');
+});
+
+for (const [name, change] of [
+  ['empty engines', (report: Record<string, any>) => { report.engines = []; }],
+  ['missing codex-security', (report: Record<string, any>) => { report.engines.splice(2, 1); }],
+  ['duplicate engine', (report: Record<string, any>) => { report.engines.push({ ...report.engines[0] }); }],
+  ['v3 missing trivy', (report: Record<string, any>) => { report.plan.schema = 'scanmux.plan/v3'; }],
+  ['different report gate', (report: Record<string, any>) => { report.gate = 'PASS'; }],
+] as const) test(`offline outcome: ${name} does not match`, () => {
+  const files = delivery(), manifest = parseDeliveryManifest(JSON.parse(files.get(manifestName)!.toString('utf8')));
+  const claim = JSON.parse(files.get('ci-result.json')!.toString('utf8')), report = JSON.parse(files.get('report.json')!.toString('utf8'));
+  change(report);
+  assert.equal(matchesOfflineOutcome(manifest, claim, report), false);
+});
+
+test('offline outcome: the plan selects the exact engine catalog, in any order', () => {
+  const files = delivery(), manifest = parseDeliveryManifest(JSON.parse(files.get(manifestName)!.toString('utf8')));
+  const claim = JSON.parse(files.get('ci-result.json')!.toString('utf8')), report = JSON.parse(files.get('report.json')!.toString('utf8'));
+  assert.equal(matchesOfflineOutcome(manifest, claim, report), true);
+  report.engines.reverse();
+  assert.equal(matchesOfflineOutcome(manifest, claim, report), true);
+  report.engines[0].engine = 'unknown';
+  assert.equal(matchesOfflineOutcome(manifest, claim, report), false);
+  report.engines[0].engine = 'runtime-advisories'; report.plan.schema = 'scanmux.plan/v3';
+  report.engines.push({ engine: 'trivy', execution: 'completed', coverage: 'analyzed' });
+  assert.equal(matchesOfflineOutcome(manifest, claim, report), true);
+  report.plan.schema = 'scanmux.plan/v999';
+  assert.equal(matchesOfflineOutcome(manifest, claim, report), false);
+});
+
+test('offline outcome: missing delivery files never match', async () => {
+  const files = delivery(), manifest = parseDeliveryManifest(JSON.parse(files.get(manifestName)!.toString('utf8')));
+  const claim = JSON.parse(files.get('ci-result.json')!.toString('utf8')), report = JSON.parse(files.get('report.json')!.toString('utf8'));
+  for (const name of deliveryFiles) {
+    const partial = { ...manifest, files: manifest.files.filter(file => file.path !== name) };
+    assert.equal(matchesOfflineOutcome(partial, claim, report), false, name);
+    const missing = produced(); missing.delete(name);
+    expectReason(await judge({ delivery: delivery({ files: missing }) }), 'delivery_files_mismatch', 4, 'manifest');
+  }
+});
+
+test('offline outcome: unreadable reports never match', async () => {
+  const files = delivery(), manifest = parseDeliveryManifest(JSON.parse(files.get(manifestName)!.toString('utf8')));
+  const claim = JSON.parse(files.get('ci-result.json')!.toString('utf8'));
+  for (const unreadable of [undefined, null]) assert.equal(matchesOfflineOutcome(manifest, claim, unreadable), false);
+  const invalid = produced(); invalid.set('report.json', Buffer.from('{'));
+  const receipt = JSON.parse(invalid.get('ci-receipt.json')!.toString('utf8')); receipt.reportHash = hash(invalid.get('report.json')!);
+  invalid.set('ci-receipt.json', json(receipt));
+  expectReason(await judge({ delivery: delivery({ files: invalid }) }), 'report_binding_mismatch', 4, 'content_binding');
+});
+
+test('offline outcome: a v3 plan missing trivy requires a failed Gate step', async () => {
+  const files = delivery({ files: produced('INCOMPLETE', target, report => { report.plan.schema = 'scanmux.plan/v3'; }) });
+  assert.equal((await judge({ delivery: files, steps: producerSteps({}, 'failure') })).outcome, 'agreed');
+  expectReason(await judge({ delivery: files }), 'gate_step_disagrees', 4, 'agreement');
 });
 
 test('judgment row workflow content: an unapproved producer file or a head off the default branch is ERROR', async () => {

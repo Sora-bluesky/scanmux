@@ -260,7 +260,11 @@ async function gate(dirs) {
   const claim = await readJson(path.join(dirs.delivery, 'ci-result.json'));
   if (![0, 1, 2, 3, 4].includes(claim.exitCode)) return 4;
   process.stdout.write(`ScanMux self-scan claim: ${claim.gate} (exit ${claim.exitCode}).\n`);
-  const matched = matchesOfflineOutcome(manifest, claim, await readJson(path.join(dirs.delivery, 'report.json')));
+  const files = await Promise.all(manifest.files.map(async file => {
+    const bytes = await readFile(path.join(dirs.delivery, file.path)).catch(() => null);
+    return bytes !== null && bytes.length === file.bytes && sha256(bytes) === file.sha256;
+  }));
+  const matched = files.every(Boolean) && matchesOfflineOutcome(manifest, claim, await readJson(path.join(dirs.delivery, 'report.json')).catch(() => null));
   process.stdout.write(`ScanMux self-scan documented offline outcome: ${matched ? 'matched' : 'did not match'}${claim.gate === 'PASS' ? ' (unexpected PASS)' : ''}.\n`);
   return matched ? 0 : claim.exitCode || 1;
 }
