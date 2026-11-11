@@ -314,6 +314,8 @@ workspace宣言のある仮想ルートは`[project]`を省略でき、依存グ
 
 依存関係の差分では、説明できる版の変更・追加でも、head側の経路上の版が、ルートからの辺と同じグループ・節にあるhead manifestの要求、またはその辺にlockが記録した制約を満たさないと判定できる場合は、`manifest_lock_mismatch`を理由に判定不能とします。対象は無条件で判定可能な要求・制約です。manifestに直接宣言された名前が経路上にあり、lockにその名前のルート辺がない場合も同じ理由になります。marker付きの要求・辺や判定できない要求・版は違反の根拠にせず、版を許容する範囲式の表記・順序の違いも違反としません。更新判定でも、ルートから対象インスタンスに届く辺にlockが記録した無条件で判定可能な制約をロック済みの版が満たさなければ、manifestとlockの要求が同じでも`manifest_lock_mismatch`になります。未説明の項目、プロジェクトの状態、`missing`、終了コードは変わりません。
 
+depsが確かめるのは`package-lock.json`・`pnpm-lock.yaml`・`yarn.lock`・`requirements.txt`・`poetry.lock`・`uv.lock`・`go.mod`・`go.sum`・`Cargo.lock`だけです。OSV-Scanner 2.7.0が知るそれ以外の依存ファイル（`Pipfile.lock`・`composer.lock`・`requirements-dev.txt`など）と、自分か親のディレクトリに対応するロックファイルが無い`package.json`・`pyproject.toml`・`Cargo.toml`は、`missing[]`に種類`unsupported_dependency_file`としてパスつきで側ごとに入ります。`osv.state`と終了コードは変わりません。`not_applicable`・終了コード0でも、確かめていない依存ファイルが残ることがあります。
+
 ## 確かめていない点
 
 - Trivy の Windows 制限実行の試作では、DNS の名前解決の失敗（11001）と直接の TCP 接続の拒否（10013）を観測しました。UDP の `SendTo` 呼出しは成功しましたが、配送は観測していません。UDP の拒否と、すべての通信を遮断するという主張は未証明です。

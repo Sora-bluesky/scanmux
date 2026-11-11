@@ -264,6 +264,19 @@ test('malformed or excluded lockfiles and an unresolved commit exit 2', async ()
   assert.equal(JSON.parse(output).exitCode, 2);
 });
 
+test('dependency files that deps does not check are named in missing without changing the exit code', async () => {
+  const unsupported = (report: DependencyReport) => report.missing.flatMap(item => item.kind === 'unsupported_dependency_file' ? [`${item.side}:${item.path}`] : []);
+  const only = { 'README.md': 'fixture\n', 'package.json': '{"name":"app"}', 'Pipfile.lock': '{}', 'php/composer.lock': '{}', 'requirements-dev.txt': 'flask\n' };
+  const none = await (await fixture({ baseFiles: only, headFiles: only })).analyze();
+  assert.equal(none.osv.state, 'not_applicable'); assert.equal(none.exitCode, 0);
+  assert.deepEqual(unsupported(none), ['head:Pipfile.lock', 'head:package.json', 'head:php/composer.lock', 'head:requirements-dev.txt',
+    'base:Pipfile.lock', 'base:package.json', 'base:php/composer.lock', 'base:requirements-dev.txt']);
+  // A checked lockfile beside an unchecked one keeps OSV completed, so the unchecked one must still be named.
+  const mixed = await (await fixture({ headFiles: { ...files('1.1.0'), 'Pipfile.lock': '{}', 'packages/a/package.json': '{"name":"a"}' } })).analyze(false);
+  assert.equal(mixed.osv.state, 'completed'); assert.equal(mixed.exitCode, 0);
+  assert.deepEqual(unsupported(mixed), ['head:Pipfile.lock'], 'a workspace member under a root lockfile is checked');
+});
+
 test('workspace links and declared workspace paths do not make OSV incomplete, including scan', async () => {
   const content = lock('1.1.0', { 'node_modules/local-link': { link: true, resolved: 'packages/local-link' },
     'packages/local-link': { name: 'local-link', version: '1.0.0' }, 'packages/local-workspace': { name: 'local-workspace' } }, { workspaces: ['packages/*'] });
