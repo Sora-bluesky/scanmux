@@ -29,6 +29,11 @@ test('a dedicated synthetic authenticated record is read without creating locks 
   assert.equal(result.accessToken, f.record.accessToken); assert.equal(result.expiresAt, f.record.expiresAt); assert.deepEqual(Object.keys(result).sort(), ['accessToken','expiresAt']);
   assert.deepEqual(await receipts(f.directory), before);
 });
+test('a record holding only the access token and expiry is read; one with refresh and ID tokens still is', async () => {
+  const f = await fixture(); delete f.record.refreshToken; delete f.record.idToken;
+  await fs.writeFile(path.join(f.directory, 'credentials.json'), JSON.stringify(f.record));
+  assert.deepEqual(await readSiwcCredentials(f.directory, controls()), { accessToken: f.record.accessToken, expiresAt: f.record.expiresAt });
+});
 test('expired, mismatched, inactive, wrong issuer, missing scopes and unsafe header records are refused', async () => {
   for (const mutate of [r => { r.expiresAt = Date.now() - 1; }, r => { r.clientId = 'oaiapp_other'; }, r => { r.state = 'revoked'; },
     r => { r.issuer = 'https://example.invalid'; }, r => { r.scopes = ['openid']; }, r => { r.accessToken += '\r\nheader'; }, r => { r.accessToken = 'synthetic-\u00e9'; }]) {
