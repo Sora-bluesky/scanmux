@@ -71,7 +71,7 @@ async function scanLockfiles(plan: Plan, config: Config, workspace: string, sign
   }
 }
 
-// shortcut: a closed list of names known to the pinned OSV-Scanner 2.7.0 that deps does not pass to it; extend it when deps gains an ecosystem.
+// shortcut: a fixed list of dependency files that deps does not pass to OSV-Scanner (lockfiles and their manifests); extend it when deps gains an ecosystem.
 const uncheckedNames = new Set(['Pipfile', 'Pipfile.lock', 'pdm.lock', 'pylock.toml', 'composer.json', 'composer.lock', 'Gemfile', 'Gemfile.lock', 'gems.locked',
   'pom.xml', 'gradle.lockfile', 'buildscript-gradle.lockfile', 'verification-metadata.xml', 'packages.lock.json', 'packages.config', 'deps.json',
   'pubspec.lock', 'mix.lock', 'renv.lock', 'conan.lock', 'bun.lock', 'Package.resolved', 'Podfile.lock', 'stack.yaml.lock', 'cabal.project.freeze']);
