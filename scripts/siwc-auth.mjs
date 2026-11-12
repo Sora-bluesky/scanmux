@@ -111,13 +111,14 @@ export async function validateTokens(tokens, { clientId, nonce, expectedSubject,
   if (!scopes.every(scope => granted.includes(scope))) throw new SiwcError('plan_permission_missing');
   return {
     schema: 1, state: 'active', issuer, clientId, subject: payload.sub,
-    accessToken: tokens.access_token, refreshToken: tokens.refresh_token, idToken: tokens.id_token,
+    // Nothing refreshes or presents the ID token later, so only the access token is kept.
+    accessToken: tokens.access_token,
     scopes: granted, expiresAt: now + tokens.expires_in * 1000, savedAt: new Date(now).toISOString(),
   };
 }
 
 export function usableCredentials(record, registration, now = Date.now()) {
-  if (!record || record.schema !== 1 || record.state !== 'active' || record.issuer !== issuer || !clientPattern.test(record.clientId ?? '') || record.clientId !== registration?.clientId || !opaque(record.subject) || !opaque(record.accessToken) || !opaque(record.refreshToken) || !opaque(record.idToken) || !Array.isArray(record.scopes) || !scopes.every(scope => record.scopes.includes(scope))) throw new SiwcError('credentials_unverified');
+  if (!record || record.schema !== 1 || record.state !== 'active' || record.issuer !== issuer || !clientPattern.test(record.clientId ?? '') || record.clientId !== registration?.clientId || !opaque(record.subject) || !opaque(record.accessToken) || !Array.isArray(record.scopes) || !scopes.every(scope => record.scopes.includes(scope))) throw new SiwcError('credentials_unverified');
   if (!Number.isSafeInteger(record.expiresAt) || record.expiresAt <= now) throw new SiwcError('credentials_expired');
   return record;
 }

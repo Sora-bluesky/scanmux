@@ -59,7 +59,7 @@ export async function readSiwcCredentials(directory, control) {
     if (!registration || registration.schema !== 1 || !['authorizing', 'registered_unverified'].includes(registration.state)
       || !/^oaiapp_[A-Za-z0-9_-]{1,200}$/.test(registration.clientId ?? '')
       || !record || record.schema !== 1 || record.state !== 'active' || record.issuer !== 'https://auth.openai.com'
-      || record.clientId !== registration.clientId || ![record.subject, record.accessToken, record.refreshToken, record.idToken].every(opaque)
+      || record.clientId !== registration.clientId || ![record.subject, record.accessToken].every(opaque)
       || !Array.isArray(record.scopes) || !scopes.every(scope => record.scopes.includes(scope)) || !/^[\x21-\x7e]+$/.test(record.accessToken)) throw new SafeError('ai_credentials_unverified');
     if (!Number.isSafeInteger(record.expiresAt) || record.expiresAt <= Date.now()) throw new SafeError('ai_credentials_expired');
     return Object.freeze({ accessToken: record.accessToken, expiresAt: record.expiresAt });

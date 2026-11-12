@@ -276,6 +276,14 @@ test('unverified or expired credentials cannot dispatch', async () => {
   assert.throws(() => usableCredentials(credential(), { clientId: 'oaiapp_other' }), SiwcError);
 });
 
+test('only the access token and its expiry are stored or required; older records with more tokens stay usable', async () => {
+  const stored = await validateTokens(await tokens('nonce'), { clientId, nonce: 'nonce', jwks });
+  assert.equal('refreshToken' in stored || 'idToken' in stored, false);
+  const { refreshToken, idToken, ...minimal } = credential();
+  assert.equal(usableCredentials(minimal, registration), minimal);
+  assert.equal(usableCredentials(credential(), registration).accessToken, credential().accessToken);
+});
+
 test('official missing media type compatibility still requires complete valid SSE and effective Blue', async () => {
   for (const type of [null, '', 'text/event-stream', 'Text/Event-Stream; charset=utf-8']) {
     const proof = await runProbe(new MemoryStore({ 'registration.json': registration }), credential(), { fetcher: async () => new Response(Buffer.from(completion()), { headers: type === null ? {} : { 'content-type': type } }) });

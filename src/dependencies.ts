@@ -14,7 +14,8 @@ export type MissingItem =
   | { readonly kind: 'input_excluded'; readonly side: 'base' | 'head'; readonly path: string; readonly reason: string }
   | { readonly kind: 'osv'; readonly side: 'base' | 'head'; readonly state: OsvState; readonly reason: string }
   | { readonly kind: 'project_undetermined'; readonly side: 'base' | 'head'; readonly lockfile: string; readonly reason: string }
-  | { readonly kind: 'change_limit'; readonly lockfile: string };
+  | { readonly kind: 'change_limit'; readonly lockfile: string }
+  | { readonly kind: 'unsupported_dependency_file'; readonly side: 'base' | 'head'; readonly path: string };
 export type OsvState = 'completed' | 'partial' | 'failed' | 'not_applicable' | 'not_started';
 export interface InputRecord { readonly path: string; readonly bytes: number; readonly sha256: string }
 export interface DependencyAdvisory extends OsvAdvisory {
@@ -68,6 +69,28 @@ async function scanLockfiles(plan: Plan, config: Config, workspace: string, sign
       if (!failed) throw new SafeError('source_cleanup_failed');
     }
   }
+}
+
+// shortcut: a fixed list of dependency files that deps does not pass to OSV-Scanner (lockfiles and their manifests); extend it when deps gains an ecosystem.
+const uncheckedNames = new Set(['Pipfile', 'Pipfile.lock', 'pdm.lock', 'pylock.toml', 'composer.json', 'composer.lock', 'Gemfile', 'Gemfile.lock', 'gems.locked',
+  'pom.xml', 'gradle.lockfile', 'buildscript-gradle.lockfile', 'verification-metadata.xml', 'packages.lock.json', 'packages.config', 'deps.json',
+  'pubspec.lock', 'mix.lock', 'renv.lock', 'conan.lock', 'bun.lock', 'Package.resolved', 'Podfile.lock', 'stack.yaml.lock', 'cabal.project.freeze']);
+// A manifest counts as checked when its own directory or an ancestor (a workspace root) has a lockfile deps reads.
+const manifestLocks: ReadonlyMap<string, readonly string[]> = new Map([
+  ['package.json', ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']], ['pyproject.toml', ['poetry.lock', 'uv.lock']], ['Cargo.toml', ['Cargo.lock']]]);
+
+export function uncheckedDependencyFiles(paths: readonly string[]): string[] {
+  const present = new Set(paths);
+  const locked = (file: string, locks: readonly string[]): boolean => {
+    for (let directory = path.posix.dirname(file); ; directory = path.posix.dirname(directory)) {
+      if (locks.some(lock => present.has(directory === '.' ? lock : `${directory}/${lock}`))) return true;
+      if (directory === '.') return false;
+    }
+  };
+  return [...present].filter(file => {
+    const name = path.posix.basename(file), locks = manifestLocks.get(name);
+    return locks ? !locked(file, locks) : uncheckedNames.has(name) || name !== 'requirements.txt' && /requirements.*\.txt$/.test(name);
+  }).sort();
 }
 
 function osvState(run: OsvRun | null, plan: Plan): OsvState {
@@ -145,6 +168,9 @@ export async function analyzeDependencies(root: string, config: Config, workspac
     }
   };
   const head = await load(plan, 'head'), base = basePlan ? await load(basePlan, 'base') : null;
+  for (const [side, sidePlan] of [['head', plan], ['base', basePlan]] as const) if (sidePlan) {
+    for (const file of uncheckedDependencyFiles([...sidePlan.files, ...sidePlan.exclusions].map(item => item.path))) missing.push({ kind: 'unsupported_dependency_file', side, path: file });
+  }
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)]);
   const lockfiles = [...new Set([...plan.lockfiles, ...basePlan?.lockfiles ?? []])].sort();
   let database: PreparedDatabase | undefined, databaseError: string | undefined;
