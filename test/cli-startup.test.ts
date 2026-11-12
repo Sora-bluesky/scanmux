@@ -18,7 +18,7 @@ test('a CLI that cannot load its modules exits with a fixed error, 2 for deps an
   }
 });
 
-test('a CLI without a main export, or whose main returns no exit code from 0 to 4, exits with the same fixed error', async () => {
+test('a CLI without a main export, or whose main returns an undocumented exit code, exits with the same fixed error', async () => {
   const home = await mkdtemp(path.resolve('test/cli-startup-'));
   test.after(() => rm(home, { recursive: true, force: true }));
   await mkdir(path.join(home, 'bin')); await mkdir(path.join(home, 'src'));
@@ -33,8 +33,10 @@ test('a CLI without a main export, or whose main returns no exit code from 0 to 
       assert.equal(result.stdout, '');
     }
   }
-  // A valid exit code still passes through unchanged.
-  await writeFile(path.join(home, 'src', 'cli.ts'), 'export async function main() { return 3; }\n');
-  const valid = run('scan');
-  assert.equal(valid.status, 3); assert.equal(valid.stderr, '');
+  // Documented exit codes still pass through unchanged, including 10 from deps for advisories.
+  for (const [command, code] of [['scan', 3], ['deps', 10]] as const) {
+    await writeFile(path.join(home, 'src', 'cli.ts'), `export async function main() { return ${code}; }\n`);
+    const valid = run(command);
+    assert.equal(valid.status, code, command); assert.equal(valid.stderr, '');
+  }
 });

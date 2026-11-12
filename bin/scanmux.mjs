@@ -6,6 +6,8 @@ const startupFailed = () => {
   process.stderr.write(JSON.stringify({ schema: 'scanmux.error/v1', ...(deps ? {} : { gate: 'ERROR' }), exitCode: code, error: 'startup_failed' }) + '\n');
   process.exitCode = code;
 };
+// Gate codes 0 to 4 (src/policy.ts exitCodes) and 10, which deps returns for advisories (src/dependencies.ts).
+const documentedExitCodes = new Set([0, 1, 2, 3, 4, 10]);
 let main;
 try {
   await import('./typescript-bootstrap.mjs');
@@ -14,5 +16,5 @@ try {
 } catch { startupFailed(); }
 if (typeof main === 'function') {
   const code = await main(process.argv.slice(2));
-  if (Number.isInteger(code) && code >= 0 && code <= 4) process.exitCode = code; else startupFailed();
+  if (documentedExitCodes.has(code)) process.exitCode = code; else startupFailed();
 }
