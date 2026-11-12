@@ -76,8 +76,8 @@ const uncheckedNames = new Set(['Pipfile', 'Pipfile.lock', 'pdm.lock', 'pylock.t
   'pom.xml', 'gradle.lockfile', 'buildscript-gradle.lockfile', 'verification-metadata.xml', 'packages.lock.json', 'packages.config', 'deps.json',
   'pubspec.lock', 'mix.lock', 'renv.lock', 'conan.lock', 'bun.lock', 'Package.resolved', 'Podfile.lock', 'stack.yaml.lock', 'cabal.project.freeze']);
 // A manifest counts as checked when its own directory or an ancestor (a workspace root) has a lockfile deps reads.
-const manifestLocks: Readonly<Record<string, readonly string[]>> = {
-  'package.json': ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'], 'pyproject.toml': ['poetry.lock', 'uv.lock'], 'Cargo.toml': ['Cargo.lock'] };
+const manifestLocks: ReadonlyMap<string, readonly string[]> = new Map([
+  ['package.json', ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']], ['pyproject.toml', ['poetry.lock', 'uv.lock']], ['Cargo.toml', ['Cargo.lock']]]);
 
 export function uncheckedDependencyFiles(paths: readonly string[]): string[] {
   const present = new Set(paths);
@@ -88,7 +88,7 @@ export function uncheckedDependencyFiles(paths: readonly string[]): string[] {
     }
   };
   return [...present].filter(file => {
-    const name = path.posix.basename(file), locks = manifestLocks[name];
+    const name = path.posix.basename(file), locks = manifestLocks.get(name);
     return locks ? !locked(file, locks) : uncheckedNames.has(name) || name !== 'requirements.txt' && /requirements.*\.txt$/.test(name);
   }).sort();
 }

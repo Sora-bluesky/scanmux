@@ -277,6 +277,15 @@ test('dependency files that deps does not check are named in missing without cha
   assert.deepEqual(unsupported(mixed), ['head:Pipfile.lock'], 'a workspace member under a root lockfile is checked');
 });
 
+test('files named like Object.prototype members are not read as dependency files', async () => {
+  // Object.fromEntries, because a __proto__ key in an object literal sets the prototype instead of adding a file.
+  // Root files only: the fixture groups nested files in plain objects, where sub/__proto__ would be lost.
+  const names = Object.fromEntries(['constructor', 'toString', '__proto__', 'hasOwnProperty'].map(name => [name, 'x\n']));
+  const report = await (await fixture({ headFiles: { ...files('1.1.0'), ...names } })).analyze(false);
+  assert.equal(report.osv.state, 'completed'); assert.equal(report.exitCode, 0);
+  assert.deepEqual(report.missing.filter(item => item.kind === 'unsupported_dependency_file'), []);
+});
+
 test('workspace links and declared workspace paths do not make OSV incomplete, including scan', async () => {
   const content = lock('1.1.0', { 'node_modules/local-link': { link: true, resolved: 'packages/local-link' },
     'packages/local-link': { name: 'local-link', version: '1.0.0' }, 'packages/local-workspace': { name: 'local-workspace' } }, { workspaces: ['packages/*'] });
