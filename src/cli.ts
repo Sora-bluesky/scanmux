@@ -44,7 +44,7 @@ import { openRepository, releaseCommandTarget, releaseLogCheck, releaseRecord, r
 import { matchIntelFiles, parseMaxAgeHours, refreshIntel } from './intel/index.ts';
 import { SourceCleanupOwner, sourceCleanupFailed, sourceCleanupFor, withSourceCleanup } from './source-cleanup.ts';
 
-const help = `ScanMux 0.2.4
+const help = `ScanMux 0.2.5
 Usage: scanmux doctor [--config /absolute/config.json] [--json]
        scanmux plan <local-git-root> --config /absolute/config.json [--base SHA --head SHA] [--json]
        scanmux scan <local-git-root> --config /absolute/config.json [--base SHA --head SHA] [--json]

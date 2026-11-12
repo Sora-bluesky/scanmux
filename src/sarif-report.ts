@@ -109,7 +109,7 @@ export function renderSarifReports(report: Report, maxOutputBytes: number): { na
   const rules = [...new Set(results.map(item => item.ruleId))].map(id => ({ id }));
   const serialize = (items: typeof results, part: number, parts: number) => JSON.stringify({
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json', version: '2.1.0', runs: [{
-      tool: { driver: { name: 'ScanMux', version: '0.2.4', rules } },
+      tool: { driver: { name: 'ScanMux', version: '0.2.5', rules } },
       originalUriBaseIds: { SRCROOT: { description: { text: 'Repository root; absolute location intentionally omitted.' } } },
       invocations: [{ executionSuccessful, ...(executionSuccessful ? {} : { toolExecutionNotifications: [{ level: 'warning', message: { text: 'ScanMux required analysis is incomplete or failed. Consult execution and coverage properties.' } }] }) }],
       properties: { runId, commit, snapshotHash, ...(comparison ? { comparison } : {}), gate, exitCode: report.exitCode, executionState, coverageState,
